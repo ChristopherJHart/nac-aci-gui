@@ -15,6 +15,14 @@ logger = logging.getLogger(__name__)
 nac_bp = Blueprint('nac', __name__)
 
 
+def _generate_slug(name: str) -> str:
+    slug = name.lower().strip()
+    slug = re.sub(r'[^a-z0-9\s_-]', '', slug)
+    slug = re.sub(r'[\s]+', '-', slug)
+    slug = re.sub(r'-+', '-', slug)
+    return slug.strip('-')
+
+
 @nac_bp.route('/tenants', methods=['GET'])
 def get_tenants():
     """
@@ -1083,3 +1091,194 @@ def create_network():
             'status': 'error',
             'message': f'Failed to create network: {str(e)}'
         }), 500
+
+
+@nac_bp.route('/create-tenant', methods=['POST'])
+def create_tenant():
+    """Create a new tenant in both NetBox and the NaC data model"""
+    try:
+        data = request.get_json()
+
+        if not data:
+            return jsonify({
+                'status': 'error',
+                'message': 'No JSON data provided'
+            }), 400
+
+        name = data.get('name')
+        if not name:
+            return jsonify({
+                'status': 'error',
+                'message': 'Missing required field: name'
+            }), 400
+
+        description = data.get('description', '')
+        slug = _generate_slug(name)
+
+        logger.info(f"Creating tenant: name={name}, slug={slug}")
+
+        # Step 1: Create tenant in NetBox
+        netbox_client = get_netbox_client()
+        netbox_payload = {
+            'name': name,
+            'slug': slug,
+        }
+        if description:
+            netbox_payload['description'] = description
+
+        netbox_response = netbox_client.post('/api/tenancy/tenants/', netbox_payload)
+
+        if not netbox_response:
+            return jsonify({
+                'status': 'error',
+                'message': 'Failed to create tenant in NetBox'
+            }), 500
+
+        logger.info(f"Tenant created in NetBox: {netbox_response.get('name')}")
+
+        # Step 2: Merge tenant into NaC data model
+        nac_client = get_nac_client()
+        tenant_data = {'name': name}
+        if description:
+            tenant_data['description'] = description
+
+        nac_response = nac_client.merge_operation(
+            path='apic/tenants',
+            data=tenant_data,
+            change_message=f"Creating tenant {name} via GUI",
+            apply=False
+        )
+
+        if nac_response:
+            logger.info(f"Tenant created in NaC data model: {name}")
+            return jsonify({
+                'status': 'success',
+                'message': f"Tenant '{name}' created successfully",
+                'data': {
+                    'name': name,
+                    'description': description,
+                    'netbox_tenant': netbox_response,
+                    'nac_response': nac_response
+                }
+            })
+        else:
+            logger.error("Tenant created in NetBox but NaC API merge failed")
+            return jsonify({
+                'status': 'partial',
+                'message': f"Tenant '{name}' created in NetBox but failed to update NaC data model",
+                'data': {
+                    'name': name,
+                    'netbox_tenant': netbox_response
+                }
+            }), 500
+
+    except Exception as e:
+        logger.error(f"Error in create tenant endpoint: {str(e)}", exc_info=True)
+        return jsonify({
+            'status': 'error',
+            'message': f'Failed to create tenant: {str(e)}'
+        }), 500
+
+
+@nac_bp.route('/create-vrf', methods=['POST'])
+def create_vrf():
+    """Create a new VRF under a tenant in both NetBox and the NaC data model"""
+    try:
+        data = request.get_json()
+
+        if not data:
+            return jsonify({
+                'status': 'error',
+                'message': 'No JSON data provided'
+            }), 400
+
+        tenant = data.get('tenant')
+        name = data.get('name')
+
+        if not all([tenant, name]):
+            return jsonify({
+                'status': 'error',
+                'message': 'Missing required fields: tenant, name'
+            }), 400
+
+        description = data.get('description', '')
+
+        logger.info(f"Creating VRF: tenant={tenant}, name={name}")
+
+        # Step 1: Look up tenant ID in NetBox
+        netbox_client = get_netbox_client()
+        tenant_lookup = netbox_client.get('/api/tenancy/tenants/', params={'name': tenant})
+
+        if not tenant_lookup or tenant_lookup.get('count', 0) == 0:
+            return jsonify({
+                'status': 'error',
+                'message': f"Tenant '{tenant}' not found in NetBox"
+            }), 400
+
+        tenant_id = tenant_lookup['results'][0]['id']
+        logger.info(f"Found NetBox tenant ID: {tenant_id}")
+
+        # Step 2: Create VRF in NetBox
+        vrf_payload = {
+            'name': name,
+            'tenant': tenant_id,
+        }
+        if description:
+            vrf_payload['description'] = description
+
+        netbox_response = netbox_client.post('/api/ipam/vrfs/', vrf_payload)
+
+        if not netbox_response:
+            return jsonify({
+                'status': 'error',
+                'message': 'Failed to create VRF in NetBox'
+            }), 500
+
+        logger.info(f"VRF created in NetBox: {netbox_response.get('name')}")
+
+        # Step 3: Merge VRF into NaC data model under the tenant
+        nac_client = get_nac_client()
+        vrf_data = {'name': name}
+        if description:
+            vrf_data['description'] = description
+
+        nac_response = nac_client.merge_operation(
+            path=f'apic/tenants/name={tenant}/vrfs',
+            data=vrf_data,
+            change_message=f"Creating VRF {name} in tenant {tenant} via GUI",
+            apply=False
+        )
+
+        if nac_response:
+            logger.info(f"VRF created in NaC data model: {name}")
+            return jsonify({
+                'status': 'success',
+                'message': f"VRF '{name}' created successfully in tenant '{tenant}'",
+                'data': {
+                    'tenant': tenant,
+                    'name': name,
+                    'description': description,
+                    'netbox_vrf': netbox_response,
+                    'nac_response': nac_response
+                }
+            })
+        else:
+            logger.error("VRF created in NetBox but NaC API merge failed")
+            return jsonify({
+                'status': 'partial',
+                'message': f"VRF '{name}' created in NetBox but failed to update NaC data model",
+                'data': {
+                    'name': name,
+                    'tenant': tenant,
+                    'netbox_vrf': netbox_response
+                }
+            }), 500
+
+    except Exception as e:
+        logger.error(f"Error in create VRF endpoint: {str(e)}", exc_info=True)
+        return jsonify({
+            'status': 'error',
+            'message': f'Failed to create VRF: {str(e)}'
+        }), 500
+
+

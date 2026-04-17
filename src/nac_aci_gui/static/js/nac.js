@@ -1936,6 +1936,165 @@ document.addEventListener('DOMContentLoaded', initializeCreateNetworkForm);
 
 
 /**
+ * Initialize the Create Tenant form
+ */
+function initializeCreateTenantForm() {
+    const form = document.getElementById('createTenantForm');
+    if (!form) return;
+
+    const nameInput = document.getElementById('createTenantName');
+    const descInput = document.getElementById('createTenantDescription');
+    const submitBtn = document.getElementById('submitCreateTenantBtn');
+    const resetBtn = document.getElementById('resetCreateTenantBtn');
+    const responseDiv = document.getElementById('createTenantResponse');
+
+    form.addEventListener('submit', async function(event) {
+        event.preventDefault();
+
+        const name = nameInput.value.trim();
+        if (!name) return;
+
+        const originalBtnText = submitBtn.innerHTML;
+        submitBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Creating...';
+        submitBtn.disabled = true;
+        responseDiv.style.display = 'none';
+
+        try {
+            const payload = { name: name };
+            const description = descInput.value.trim();
+            if (description) payload.description = description;
+
+            const response = await fetch('/api/v1/nac/create-tenant', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+
+            const result = await response.json();
+
+            if (result.status === 'success') {
+                responseDiv.className = 'alert alert-success';
+                responseDiv.innerHTML = `<strong><i class="bi bi-check-circle me-1"></i>Success!</strong> Tenant <strong>${name}</strong> created in both NetBox and the NaC data model. A pull request has been created for review.`;
+                form.reset();
+            } else {
+                responseDiv.className = 'alert alert-danger';
+                responseDiv.innerHTML = `<strong><i class="bi bi-exclamation-triangle me-1"></i>Error:</strong> ${result.message}`;
+            }
+        } catch (error) {
+            responseDiv.className = 'alert alert-danger';
+            responseDiv.innerHTML = `<strong><i class="bi bi-exclamation-triangle me-1"></i>Error:</strong> ${error.message}`;
+        }
+
+        responseDiv.style.display = 'block';
+        submitBtn.innerHTML = originalBtnText;
+        submitBtn.disabled = false;
+        responseDiv.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    });
+
+    resetBtn.addEventListener('click', function() {
+        form.reset();
+        responseDiv.style.display = 'none';
+    });
+}
+
+document.addEventListener('DOMContentLoaded', initializeCreateTenantForm);
+
+
+/**
+ * Initialize the Create VRF form (with tenant dropdown)
+ */
+function initializeCreateTenantVrfForm() {
+    const form = document.getElementById('createTenantVrfForm');
+    if (!form) return;
+
+    const tenantSelect = document.getElementById('createVrfTenant');
+    const nameInput = document.getElementById('createVrfName');
+    const descInput = document.getElementById('createVrfDescription');
+    const submitBtn = document.getElementById('submitCreateVrfBtn');
+    const resetBtn = document.getElementById('resetCreateVrfBtn');
+    const responseDiv = document.getElementById('createTenantVrfResponse');
+
+    // Load tenants into dropdown
+    async function loadTenants() {
+        try {
+            const response = await fetch('/api/v1/nac/tenants');
+            const result = await response.json();
+
+            // Clear existing options except placeholder
+            while (tenantSelect.options.length > 1) {
+                tenantSelect.remove(1);
+            }
+
+            if (result.status === 'success' && result.data) {
+                result.data.forEach(function(tenant) {
+                    const option = document.createElement('option');
+                    option.value = tenant.name;
+                    option.textContent = tenant.name;
+                    tenantSelect.appendChild(option);
+                });
+            }
+        } catch (error) {
+            console.error('Failed to load tenants:', error);
+        }
+    }
+
+    loadTenants();
+
+    form.addEventListener('submit', async function(event) {
+        event.preventDefault();
+
+        const tenant = tenantSelect.value;
+        const name = nameInput.value.trim();
+        if (!tenant || !name) return;
+
+        const originalBtnText = submitBtn.innerHTML;
+        submitBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Creating...';
+        submitBtn.disabled = true;
+        responseDiv.style.display = 'none';
+
+        try {
+            const payload = { tenant: tenant, name: name };
+            const description = descInput.value.trim();
+            if (description) payload.description = description;
+
+            const response = await fetch('/api/v1/nac/create-vrf', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+
+            const result = await response.json();
+
+            if (result.status === 'success') {
+                responseDiv.className = 'alert alert-success';
+                responseDiv.innerHTML = `<strong><i class="bi bi-check-circle me-1"></i>Success!</strong> VRF <strong>${name}</strong> created in tenant <strong>${tenant}</strong> in both NetBox and the NaC data model. A pull request has been created for review.`;
+                form.reset();
+                loadTenants();
+            } else {
+                responseDiv.className = 'alert alert-danger';
+                responseDiv.innerHTML = `<strong><i class="bi bi-exclamation-triangle me-1"></i>Error:</strong> ${result.message}`;
+            }
+        } catch (error) {
+            responseDiv.className = 'alert alert-danger';
+            responseDiv.innerHTML = `<strong><i class="bi bi-exclamation-triangle me-1"></i>Error:</strong> ${error.message}`;
+        }
+
+        responseDiv.style.display = 'block';
+        submitBtn.innerHTML = originalBtnText;
+        submitBtn.disabled = false;
+        responseDiv.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    });
+
+    resetBtn.addEventListener('click', function() {
+        form.reset();
+        responseDiv.style.display = 'none';
+    });
+}
+
+document.addEventListener('DOMContentLoaded', initializeCreateTenantVrfForm);
+
+
+/**
  * Initialize the VRFs tenant selector and related functionality
  */
 function initializeVrfsTenantSelector(tableInstances) {
