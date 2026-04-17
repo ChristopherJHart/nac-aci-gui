@@ -493,6 +493,173 @@ class NacApiClient:
             logger.error(f"ERROR retrieving VRFs for tenant '{tenant_name}': {str(e)}", exc_info=True)
             return None
 
+    def get_leaf_nodes(self) -> Optional[list]:
+        try:
+            data_model = self.read_data_model()
+            if not data_model:
+                return []
+            nodes = data_model.get('apic', {}).get('node_policies', {}).get('nodes', [])
+            return [n for n in nodes if n.get('role') == 'leaf']
+        except Exception as e:
+            logger.error(f"Error reading leaf nodes: {str(e)}", exc_info=True)
+            return None
+
+    def _expand_port_blocks(self, port_blocks: list) -> list:
+        ports = []
+        for block in port_blocks:
+            from_port = block.get('from_port')
+            if from_port is None:
+                continue
+            to_port = block.get('to_port', from_port)
+            from_module = block.get('from_module', block.get('to_module', 1))
+            to_module = block.get('to_module', from_module)
+            for mod in range(from_module, to_module + 1):
+                for p in range(from_port, to_port + 1):
+                    ports.append({'module': mod, 'port': p})
+        return ports
+
+    def get_ports_for_leaf(self, node_id: int) -> Optional[list]:
+        try:
+            data_model = self.read_data_model()
+            if not data_model:
+                return []
+            access = data_model.get('apic', {}).get('access_policies', {})
+
+            intf_profile_names = []
+            for swp in access.get('leaf_switch_profiles', []):
+                for sel in swp.get('selectors', []):
+                    for nb in sel.get('node_blocks', []):
+                        nb_from = nb.get('from', 0)
+                        nb_to = nb.get('to', nb_from)
+                        if nb_from <= node_id <= nb_to:
+                            intf_profile_names.extend(swp.get('interface_profiles', []))
+
+            ports = []
+            seen = set()
+            for lip in access.get('leaf_interface_profiles', []):
+                if lip.get('name') not in intf_profile_names:
+                    continue
+                for sel in lip.get('selectors', []):
+                    policy_group = sel.get('policy_group', '')
+                    expanded = self._expand_port_blocks(sel.get('port_blocks', []))
+                    for p in expanded:
+                        key = (p['module'], p['port'])
+                        if key not in seen:
+                            seen.add(key)
+                            ports.append({
+                                'module': p['module'],
+                                'port': p['port'],
+                                'policy_group': policy_group,
+                                'selector_name': sel.get('name', '')
+                            })
+
+            ports.sort(key=lambda x: (x['module'], x['port']))
+            return ports
+        except Exception as e:
+            logger.error(f"Error reading ports for leaf {node_id}: {str(e)}", exc_info=True)
+            return None
+
+    def get_available_epgs_for_port(self, node_id: int, module: int, port: int) -> Optional[list]:
+        try:
+            data_model = self.read_data_model()
+            if not data_model:
+                return []
+            access = data_model.get('apic', {}).get('access_policies', {})
+
+            # Trace port to policy group
+            policy_group_name = None
+            intf_profile_names = []
+            for swp in access.get('leaf_switch_profiles', []):
+                for sel in swp.get('selectors', []):
+                    for nb in sel.get('node_blocks', []):
+                        nb_from = nb.get('from', 0)
+                        nb_to = nb.get('to', nb_from)
+                        if nb_from <= node_id <= nb_to:
+                            intf_profile_names.extend(swp.get('interface_profiles', []))
+
+            for lip in access.get('leaf_interface_profiles', []):
+                if lip.get('name') not in intf_profile_names:
+                    continue
+                for sel in lip.get('selectors', []):
+                    expanded = self._expand_port_blocks(sel.get('port_blocks', []))
+                    for p in expanded:
+                        if p['module'] == module and p['port'] == port:
+                            policy_group_name = sel.get('policy_group', '')
+                            break
+                    if policy_group_name:
+                        break
+                if policy_group_name:
+                    break
+
+            if not policy_group_name:
+                return []
+
+            # Resolve policy group to AAEP
+            aaep_name = None
+            for pg in access.get('leaf_interface_policy_groups', []):
+                if pg.get('name') == policy_group_name:
+                    aaep_name = pg.get('aaep')
+                    break
+
+            if not aaep_name:
+                return []
+
+            # Resolve AAEP to endpoint groups
+            epg_bindings = []
+            for aaep in access.get('aaeps', []):
+                if aaep.get('name') == aaep_name:
+                    epg_bindings = aaep.get('endpoint_groups', [])
+                    break
+
+            if not epg_bindings:
+                return []
+
+            # Filter out EPGs already bound on this node+module+port
+            tenants = data_model.get('apic', {}).get('tenants', [])
+            tenant_map = {t['name']: t for t in tenants}
+
+            available = []
+            existing = []
+            for binding in epg_bindings:
+                tenant_name = binding.get('tenant', '')
+                ap_name = binding.get('application_profile', '')
+                epg_name = binding.get('endpoint_group', '')
+                vlan = binding.get('vlan')
+
+                bound_mode = None
+                tenant_obj = tenant_map.get(tenant_name, {})
+                for ap in tenant_obj.get('application_profiles', []):
+                    if ap.get('name') != ap_name:
+                        continue
+                    for epg in ap.get('endpoint_groups', []):
+                        if epg.get('name') != epg_name:
+                            continue
+                        for sp in epg.get('static_ports', []):
+                            if (sp.get('node_id') == node_id and
+                                    sp.get('module', 1) == module and
+                                    sp.get('port') == port):
+                                bound_mode = sp.get('mode', 'regular')
+                                break
+
+                entry = {
+                    'tenant': tenant_name,
+                    'application_profile': ap_name,
+                    'endpoint_group': epg_name,
+                    'vlan': vlan,
+                    'display': f"{epg_name} (VLAN {vlan})"
+                }
+
+                if bound_mode is not None:
+                    entry['mode'] = bound_mode
+                    existing.append(entry)
+                else:
+                    available.append(entry)
+
+            return {'available': available, 'existing': existing}
+        except Exception as e:
+            logger.error(f"Error reading available EPGs for port: {str(e)}", exc_info=True)
+            return None
+
     def test_connection(self) -> Dict[str, Any]:
         """
         Test connection to NaC API and verify configuration

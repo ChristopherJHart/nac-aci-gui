@@ -1282,3 +1282,130 @@ def create_vrf():
         }), 500
 
 
+@nac_bp.route('/leaf-nodes', methods=['GET'])
+def get_leaf_nodes_endpoint():
+    """Get leaf nodes from the data model"""
+    try:
+        client = get_nac_client()
+        nodes = client.get_leaf_nodes()
+        if nodes is not None:
+            return jsonify({'status': 'success', 'data': nodes})
+        else:
+            return jsonify({'status': 'error', 'message': 'Failed to retrieve leaf nodes'}), 500
+    except Exception as e:
+        logger.error(f"Error in leaf-nodes endpoint: {str(e)}", exc_info=True)
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+
+@nac_bp.route('/leaf-ports', methods=['GET'])
+def get_leaf_ports():
+    """Get ports for a leaf node from the data model"""
+    try:
+        node_id = request.args.get('node_id')
+        if not node_id:
+            return jsonify({'status': 'error', 'message': 'Missing required parameter: node_id'}), 400
+        try:
+            node_id = int(node_id)
+        except ValueError:
+            return jsonify({'status': 'error', 'message': 'node_id must be an integer'}), 400
+
+        client = get_nac_client()
+        ports = client.get_ports_for_leaf(node_id)
+        if ports is not None:
+            return jsonify({'status': 'success', 'data': ports})
+        else:
+            return jsonify({'status': 'error', 'message': 'Failed to retrieve ports'}), 500
+    except Exception as e:
+        logger.error(f"Error in leaf-ports endpoint: {str(e)}", exc_info=True)
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+
+@nac_bp.route('/port-available-epgs', methods=['GET'])
+def get_port_available_epgs():
+    """Get available EPGs for a specific port (not yet bound as static ports)"""
+    try:
+        node_id = request.args.get('node_id')
+        module = request.args.get('module')
+        port = request.args.get('port')
+
+        if not all([node_id, module, port]):
+            return jsonify({'status': 'error', 'message': 'Missing required parameters: node_id, module, port'}), 400
+        try:
+            node_id = int(node_id)
+            module = int(module)
+            port = int(port)
+        except ValueError:
+            return jsonify({'status': 'error', 'message': 'node_id, module, and port must be integers'}), 400
+
+        client = get_nac_client()
+        result = client.get_available_epgs_for_port(node_id, module, port)
+        if result is not None:
+            if isinstance(result, dict):
+                return jsonify({'status': 'success', 'data': result.get('available', []), 'existing': result.get('existing', [])})
+            return jsonify({'status': 'success', 'data': result, 'existing': []})
+        else:
+            return jsonify({'status': 'error', 'message': 'Failed to retrieve available EPGs'}), 500
+    except Exception as e:
+        logger.error(f"Error in port-available-epgs endpoint: {str(e)}", exc_info=True)
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+
+@nac_bp.route('/add-static-port', methods=['POST'])
+def add_static_port():
+    """Add a static port binding to an EPG in the NaC data model"""
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({'status': 'error', 'message': 'No JSON data provided'}), 400
+
+        required = ['tenant', 'application_profile', 'endpoint_group', 'node_id', 'module', 'port', 'vlan']
+        missing = [f for f in required if f not in data]
+        if missing:
+            return jsonify({'status': 'error', 'message': f'Missing required fields: {", ".join(missing)}'}), 400
+
+        mode = data.get('mode', 'regular')
+        if mode not in ('regular', 'native', 'untagged'):
+            return jsonify({'status': 'error', 'message': 'mode must be regular, native, or untagged'}), 400
+
+        tenant = data['tenant']
+        app_profile = data['application_profile']
+        epg = data['endpoint_group']
+
+        static_port_data = {
+            'node_id': int(data['node_id']),
+            'module': int(data['module']),
+            'port': int(data['port']),
+            'vlan': int(data['vlan']),
+            'mode': mode
+        }
+
+        path = f"apic/tenants/name={tenant}/application_profiles/name={app_profile}/endpoint_groups/name={epg}/static_ports"
+
+        logger.info(f"Adding static port binding: node {static_port_data['node_id']} port {static_port_data['module']}/{static_port_data['port']} to EPG {epg}")
+
+        client = get_nac_client()
+        response = client.merge_operation(
+            path=path,
+            data=static_port_data,
+            change_message=f"Adding VLAN {static_port_data['vlan']} on node {static_port_data['node_id']} port {static_port_data['module']}/{static_port_data['port']} to EPG {epg} via GUI",
+            apply=False
+        )
+
+        if response:
+            return jsonify({
+                'status': 'success',
+                'message': f"Static port binding added: VLAN {static_port_data['vlan']} on node {static_port_data['node_id']} port {static_port_data['module']}/{static_port_data['port']} → EPG {epg}",
+                'data': {
+                    'tenant': tenant,
+                    'application_profile': app_profile,
+                    'endpoint_group': epg,
+                    'static_port': static_port_data,
+                    'nac_response': response
+                }
+            })
+        else:
+            return jsonify({'status': 'error', 'message': 'Failed to add static port binding in NaC API'}), 500
+
+    except Exception as e:
+        logger.error(f"Error in add-static-port endpoint: {str(e)}", exc_info=True)
+        return jsonify({'status': 'error', 'message': f'Failed to add static port binding: {str(e)}'}), 500

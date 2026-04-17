@@ -90,6 +90,12 @@
                                 <span>Create Network</span>
                             </a>
                         </li>
+                        <li class="sidebar-item">
+                            <a href="#" class="sidebar-link" data-page="add-static-port" data-parent="action">
+                                <i class="bi bi-ethernet"></i>
+                                <span>Add VLAN to Port</span>
+                            </a>
+                        </li>
                     </ul>
                 </li>
 
@@ -689,6 +695,86 @@
                                     </button>
                                     <button type="submit" class="btn btn-primary" id="submitCreateNetworkBtn">
                                         <i class="bi bi-plus-circle me-1"></i>Create Network
+                                    </button>
+                                </div>
+                            </form>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Add VLAN to Port Page -->
+                <div id="page-add-static-port" class="page-content">
+                    <div class="page-header mb-4">
+                        <h2><i class="bi bi-ethernet me-2"></i>Add VLAN to Trunk Port</h2>
+                        <p class="text-muted">Add a static port binding (VLAN to trunk port) on an ACI leaf switch</p>
+                    </div>
+
+                    <div class="row">
+                        <div class="col-lg-8 mx-auto">
+                            <form id="addStaticPortForm">
+                                <div class="card shadow-sm mb-4">
+                                    <div class="card-header bg-primary text-white">
+                                        <h5 class="mb-0"><i class="bi bi-ethernet me-2"></i>Static Port Binding</h5>
+                                    </div>
+                                    <div class="card-body">
+                                        <!-- Leaf Node -->
+                                        <div class="mb-4">
+                                            <label for="staticPortLeafNode" class="form-label fw-bold">
+                                                <i class="bi bi-hdd-network text-primary me-2"></i>Leaf Node <span class="text-danger">*</span>
+                                            </label>
+                                            <select class="form-select" id="staticPortLeafNode" required>
+                                                <option value="">-- Select a Leaf Node --</option>
+                                            </select>
+                                            <small class="form-text text-muted">Select the leaf switch where the port resides</small>
+                                        </div>
+
+                                        <!-- Port -->
+                                        <div class="mb-4">
+                                            <label for="staticPortPort" class="form-label fw-bold">
+                                                <i class="bi bi-plug text-primary me-2"></i>Port <span class="text-danger">*</span>
+                                            </label>
+                                            <select class="form-select" id="staticPortPort" required disabled>
+                                                <option value="">-- Select a Leaf Node first --</option>
+                                            </select>
+                                            <small class="form-text text-muted">Select the trunk port on the leaf switch</small>
+                                        </div>
+
+                                        <!-- EPG / VLAN -->
+                                        <div class="mb-4">
+                                            <label for="staticPortEpg" class="form-label fw-bold">
+                                                <i class="bi bi-diagram-3 text-primary me-2"></i>EPG / VLAN <span class="text-danger">*</span>
+                                            </label>
+                                            <select class="form-select" id="staticPortEpg" required disabled>
+                                                <option value="">-- Select a Port first --</option>
+                                            </select>
+                                            <small class="form-text text-muted">Select the EPG and VLAN to bind to this port</small>
+                                        </div>
+
+                                        <!-- Mode -->
+                                        <div class="mb-4">
+                                            <label for="staticPortMode" class="form-label fw-bold">
+                                                <i class="bi bi-sliders text-primary me-2"></i>Mode <span class="text-danger">*</span>
+                                            </label>
+                                            <select class="form-select" id="staticPortMode" required disabled>
+                                                <option value="regular" selected>Regular (Tagged/Trunk)</option>
+                                                <option value="native">Native (Untagged VLAN)</option>
+                                                <option value="untagged">Untagged (Access)</option>
+                                            </select>
+                                            <small class="form-text text-muted">Select the VLAN tagging mode for this port binding</small>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- Response Area -->
+                                <div id="addStaticPortResponse" class="alert" style="display: none;" role="alert"></div>
+
+                                <!-- Form Actions -->
+                                <div class="d-flex justify-content-end gap-2">
+                                    <button type="button" class="btn btn-outline-secondary" id="resetAddStaticPortBtn">
+                                        <i class="bi bi-x-circle me-1"></i>Reset
+                                    </button>
+                                    <button type="submit" class="btn btn-primary" id="submitAddStaticPortBtn">
+                                        <i class="bi bi-ethernet me-1"></i>Add Static Port Binding
                                     </button>
                                 </div>
                             </form>

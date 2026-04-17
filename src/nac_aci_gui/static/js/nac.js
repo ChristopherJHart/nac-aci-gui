@@ -2095,6 +2095,215 @@ document.addEventListener('DOMContentLoaded', initializeCreateTenantVrfForm);
 
 
 /**
+ * Initialize the Add VLAN to Trunk Port form (cascading dropdowns)
+ */
+function initializeAddStaticPortForm() {
+    const form = document.getElementById('addStaticPortForm');
+    if (!form) return;
+
+    const leafSelect = document.getElementById('staticPortLeafNode');
+    const portSelect = document.getElementById('staticPortPort');
+    const epgSelect = document.getElementById('staticPortEpg');
+    const modeSelect = document.getElementById('staticPortMode');
+    const submitBtn = document.getElementById('submitAddStaticPortBtn');
+    const resetBtn = document.getElementById('resetAddStaticPortBtn');
+    const responseDiv = document.getElementById('addStaticPortResponse');
+
+    function resetDownstream(from) {
+        if (from <= 1) {
+            portSelect.innerHTML = '<option value="">-- Select a Leaf Node first --</option>';
+            portSelect.disabled = true;
+        }
+        if (from <= 2) {
+            epgSelect.innerHTML = '<option value="">-- Select a Port first --</option>';
+            epgSelect.disabled = true;
+        }
+        if (from <= 3) {
+            modeSelect.disabled = true;
+        }
+    }
+
+    async function loadLeafNodes() {
+        try {
+            const response = await fetch('/api/v1/nac/leaf-nodes');
+            const result = await response.json();
+            leafSelect.innerHTML = '<option value="">-- Select a Leaf Node --</option>';
+            if (result.status === 'success' && result.data) {
+                result.data.forEach(function(node) {
+                    const option = document.createElement('option');
+                    option.value = node.id;
+                    option.textContent = node.name + ' (Node ' + node.id + ')';
+                    leafSelect.appendChild(option);
+                });
+            }
+        } catch (error) {
+            console.error('Error loading leaf nodes:', error);
+        }
+    }
+
+    loadLeafNodes();
+
+    leafSelect.addEventListener('change', async function() {
+        resetDownstream(1);
+        const nodeId = this.value;
+        if (!nodeId) return;
+
+        portSelect.innerHTML = '<option value="">-- Loading... --</option>';
+        try {
+            const response = await fetch('/api/v1/nac/leaf-ports?node_id=' + nodeId);
+            const result = await response.json();
+            portSelect.innerHTML = '<option value="">-- Select a Port --</option>';
+            if (result.status === 'success' && result.data && result.data.length > 0) {
+                result.data.forEach(function(port) {
+                    const option = document.createElement('option');
+                    option.value = port.module + '/' + port.port;
+                    option.textContent = port.module + '/' + port.port + ' (' + port.policy_group + ')';
+                    portSelect.appendChild(option);
+                });
+                portSelect.disabled = false;
+            } else {
+                portSelect.innerHTML = '<option value="">-- No ports found --</option>';
+            }
+        } catch (error) {
+            console.error('Error loading ports:', error);
+            portSelect.innerHTML = '<option value="">-- Error loading ports --</option>';
+        }
+    });
+
+    // Existing bindings display element (inserted after the port dropdown)
+    var existingDiv = document.getElementById('staticPortExisting');
+    if (!existingDiv) {
+        existingDiv = document.createElement('div');
+        existingDiv.id = 'staticPortExisting';
+        existingDiv.style.display = 'none';
+        portSelect.parentNode.after(existingDiv);
+    }
+
+    portSelect.addEventListener('change', async function() {
+        resetDownstream(2);
+        existingDiv.style.display = 'none';
+        const portValue = this.value;
+        const nodeId = leafSelect.value;
+        if (!portValue || !nodeId) return;
+
+        const parts = portValue.split('/');
+        epgSelect.innerHTML = '<option value="">-- Loading... --</option>';
+        try {
+            const response = await fetch(
+                '/api/v1/nac/port-available-epgs?node_id=' + nodeId + '&module=' + parts[0] + '&port=' + parts[1]
+            );
+            const result = await response.json();
+
+            // Show existing bindings
+            if (result.existing && result.existing.length > 0) {
+                var items = result.existing.map(function(epg) {
+                    var badge = epg.mode === 'native' ? 'bg-warning text-dark' :
+                                epg.mode === 'untagged' ? 'bg-secondary' : 'bg-primary';
+                    return '<li class="list-group-item d-flex justify-content-between align-items-center py-2">' +
+                        '<span><i class="bi bi-check-circle-fill text-success me-2"></i>' + epg.display + '</span>' +
+                        '<span class="badge ' + badge + '">' + (epg.mode || 'regular') + '</span></li>';
+                }).join('');
+                existingDiv.innerHTML = '<div class="mb-4"><small class="form-text fw-bold text-muted d-block mb-2">' +
+                    '<i class="bi bi-info-circle me-1"></i>Currently trunked on port ' + portValue + ':</small>' +
+                    '<ul class="list-group list-group-flush">' + items + '</ul></div>';
+                existingDiv.style.display = 'block';
+            } else {
+                existingDiv.innerHTML = '';
+                existingDiv.style.display = 'none';
+            }
+
+            // Populate available EPGs dropdown
+            epgSelect.innerHTML = '<option value="">-- Select an EPG --</option>';
+            if (result.status === 'success' && result.data && result.data.length > 0) {
+                result.data.forEach(function(epg) {
+                    var option = document.createElement('option');
+                    option.value = JSON.stringify({
+                        tenant: epg.tenant,
+                        application_profile: epg.application_profile,
+                        endpoint_group: epg.endpoint_group,
+                        vlan: epg.vlan
+                    });
+                    option.textContent = epg.display;
+                    epgSelect.appendChild(option);
+                });
+                epgSelect.disabled = false;
+            } else {
+                epgSelect.innerHTML = '<option value="">-- No available EPGs for this port --</option>';
+            }
+        } catch (error) {
+            console.error('Error loading EPGs:', error);
+            epgSelect.innerHTML = '<option value="">-- Error loading EPGs --</option>';
+        }
+    });
+
+    epgSelect.addEventListener('change', function() {
+        modeSelect.disabled = !this.value;
+        if (this.value) modeSelect.value = 'regular';
+    });
+
+    form.addEventListener('submit', async function(event) {
+        event.preventDefault();
+        if (!epgSelect.value) return;
+
+        const epgData = JSON.parse(epgSelect.value);
+        const portParts = portSelect.value.split('/');
+        const payload = {
+            tenant: epgData.tenant,
+            application_profile: epgData.application_profile,
+            endpoint_group: epgData.endpoint_group,
+            node_id: parseInt(leafSelect.value),
+            module: parseInt(portParts[0]),
+            port: parseInt(portParts[1]),
+            vlan: epgData.vlan,
+            mode: modeSelect.value
+        };
+
+        const originalText = submitBtn.innerHTML;
+        submitBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Adding...';
+        submitBtn.disabled = true;
+        responseDiv.style.display = 'none';
+
+        try {
+            const response = await fetch('/api/v1/nac/add-static-port', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+            const result = await response.json();
+
+            if (result.status === 'success') {
+                responseDiv.className = 'alert alert-success';
+                responseDiv.innerHTML = '<strong><i class="bi bi-check-circle me-1"></i>Success!</strong> ' + result.message + '. A pull request has been created for review.';
+                form.reset();
+                resetDownstream(1);
+                loadLeafNodes();
+            } else {
+                responseDiv.className = 'alert alert-danger';
+                responseDiv.innerHTML = '<strong><i class="bi bi-exclamation-triangle me-1"></i>Error:</strong> ' + result.message;
+            }
+        } catch (error) {
+            responseDiv.className = 'alert alert-danger';
+            responseDiv.innerHTML = '<strong><i class="bi bi-exclamation-triangle me-1"></i>Error:</strong> ' + error.message;
+        }
+
+        responseDiv.style.display = 'block';
+        submitBtn.innerHTML = originalText;
+        submitBtn.disabled = false;
+        responseDiv.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    });
+
+    resetBtn.addEventListener('click', function() {
+        form.reset();
+        resetDownstream(1);
+        existingDiv.style.display = 'none';
+        responseDiv.style.display = 'none';
+    });
+}
+
+document.addEventListener('DOMContentLoaded', initializeAddStaticPortForm);
+
+
+/**
  * Initialize the VRFs tenant selector and related functionality
  */
 function initializeVrfsTenantSelector(tableInstances) {

@@ -369,7 +369,7 @@ function initializeTableForPage(page) {
     };
 
     // Determine if this is a NaC or ACI page and delegate
-    const nacPages = ['bridge-domains', 'action-vrfs', 'action-networks', 'nac-tenants', 'nac-vrfs', 'create-tenant', 'create-tenant-vrf'];
+    const nacPages = ['bridge-domains', 'action-vrfs', 'action-networks', 'nac-tenants', 'nac-vrfs', 'create-tenant', 'create-tenant-vrf', 'add-static-port'];
     const aciPages = ['aci-tenants'];
 
     if (nacPages.includes(page)) {
