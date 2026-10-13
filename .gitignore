@@ -66,3 +66,6 @@ htmlcov/
 #.claude
 .claude/memory_logs/*
 .claude/memory/archive/*
+
+# Local deployment overrides
+docker-compose.override.yml

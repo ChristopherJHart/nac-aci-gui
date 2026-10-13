@@ -1,0 +1,36 @@
+# Environment-specific settings (proxies, extra_hosts, nac-api image tag) belong
+# in docker-compose.override.yml and .env, which are not committed.
+services:
+  nac-aci-gui:
+    build:
+      context: .
+      args:
+        HTTP_PROXY: ${HTTP_PROXY:-}
+        HTTPS_PROXY: ${HTTPS_PROXY:-}
+        NO_PROXY: ${NO_PROXY:-}
+    ports:
+      - "9999:9999"
+    volumes:
+      - ./yaml/config.yaml:/app/yaml/config.yaml
+    env_file:
+      - path: .env
+        required: false
+    restart: unless-stopped
+    depends_on:
+      nac-api:
+        condition: service_healthy
+
+  nac-api:
+    image: ${NACAPI_IMAGE:-containers.cisco.com/netascode/nacapi:0.5.2}
+    ports:
+      - "8000:8000"
+    environment:
+      - NACAPI_CONFIG=/nacapi.yaml
+      - DISABLE_TRAEFIK=true
+    healthcheck:
+      test: ["CMD", "/usr/bin/python", "-c", "import urllib.request, json; req = urllib.request.Request('http://localhost:8000/graphql/', data=json.dumps({'query': '{ health { status } }'}).encode(), headers={'Content-Type': 'application/json'}); resp = urllib.request.urlopen(req); exit(0 if b'\"status\":\"ok\"' in resp.read() else 1)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
