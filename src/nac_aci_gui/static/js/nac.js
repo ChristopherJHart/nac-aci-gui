@@ -2304,6 +2304,319 @@ document.addEventListener('DOMContentLoaded', initializeAddStaticPortForm);
 
 
 /**
+ * Initialize the Trunk VLANs to Server form
+ *
+ * The user finds a server from NetBox DCIM (filtered by row, rack and name),
+ * picks one of its interfaces, and the leaf switch and port are resolved from
+ * the NetBox cable on that interface. From there it reuses the same EPG
+ * availability and static port endpoints as the Add VLAN to Trunk Port form.
+ */
+function initializeServerTrunkForm() {
+    const form = document.getElementById('serverTrunkForm');
+    if (!form) return;
+
+    const rowSelect = document.getElementById('serverTrunkRow');
+    const rackSelect = document.getElementById('serverTrunkRack');
+    const searchInput = document.getElementById('serverTrunkSearch');
+    const serverSelect = document.getElementById('serverTrunkServer');
+    const serverHelp = document.getElementById('serverTrunkServerHelp');
+    const interfaceSelect = document.getElementById('serverTrunkInterface');
+    const connectionDiv = document.getElementById('serverTrunkConnection');
+    const existingDiv = document.getElementById('serverTrunkExisting');
+    const epgSelect = document.getElementById('serverTrunkEpg');
+    const modeSelect = document.getElementById('serverTrunkMode');
+    const submitBtn = document.getElementById('submitServerTrunkBtn');
+    const resetBtn = document.getElementById('resetServerTrunkBtn');
+    const responseDiv = document.getElementById('serverTrunkResponse');
+
+    let servers = [];
+    let connections = [];
+
+    function escapeHtml(value) {
+        const div = document.createElement('div');
+        div.textContent = value == null ? '' : String(value);
+        return div.innerHTML;
+    }
+
+    function resetDownstream(from) {
+        if (from <= 1) {
+            interfaceSelect.innerHTML = '<option value="">-- Select a Server first --</option>';
+            interfaceSelect.disabled = true;
+            connections = [];
+        }
+        if (from <= 2) {
+            connectionDiv.style.display = 'none';
+            connectionDiv.innerHTML = '';
+            existingDiv.style.display = 'none';
+            existingDiv.innerHTML = '';
+            epgSelect.innerHTML = '<option value="">-- Select a Server Interface first --</option>';
+            epgSelect.disabled = true;
+        }
+        if (from <= 3) {
+            modeSelect.disabled = true;
+            submitBtn.disabled = true;
+        }
+    }
+
+    function fillSelect(select, placeholder, values) {
+        const current = select.value;
+        select.innerHTML = '<option value="">' + placeholder + '</option>';
+        values.forEach(function(value) {
+            const option = document.createElement('option');
+            option.value = value;
+            option.textContent = value;
+            select.appendChild(option);
+        });
+        if (values.includes(current)) select.value = current;
+    }
+
+    function uniqueSorted(values) {
+        return Array.from(new Set(values.filter(Boolean))).sort();
+    }
+
+    function renderServers() {
+        const row = rowSelect.value;
+        const rack = rackSelect.value;
+        const query = searchInput.value.trim().toLowerCase();
+        const selected = serverSelect.value;
+
+        const racksInRow = uniqueSorted(servers.filter(s => !row || s.row === row).map(s => s.rack));
+        fillSelect(rackSelect, 'All racks', racksInRow);
+
+        const matches = servers.filter(function(s) {
+            if (row && s.row !== row) return false;
+            if (rackSelect.value && s.rack !== rackSelect.value) return false;
+            if (!query) return true;
+            return (s.name + ' ' + (s.description || '')).toLowerCase().includes(query);
+        });
+
+        serverSelect.innerHTML = '';
+        matches.forEach(function(s) {
+            const option = document.createElement('option');
+            option.value = s.id;
+            option.textContent = s.name + ' — ' + (s.description || 'Server') +
+                ' (' + (s.row || 'No row') + ', Rack ' + (s.rack || '?') + ')';
+            serverSelect.appendChild(option);
+        });
+        if (matches.some(s => String(s.id) === selected)) {
+            serverSelect.value = selected;
+        }
+        serverHelp.textContent = matches.length + ' of ' + servers.length + ' servers shown';
+    }
+
+    async function loadServers() {
+        try {
+            const response = await fetch('/api/v1/netbox/servers');
+            const result = await response.json();
+            if (result.status !== 'success') {
+                serverHelp.textContent = 'Failed to load servers from NetBox: ' + (result.message || 'unknown error');
+                return;
+            }
+            servers = result.data || [];
+            fillSelect(rowSelect, 'All rows', uniqueSorted(servers.map(s => s.row)));
+            renderServers();
+        } catch (error) {
+            console.error('Error loading servers:', error);
+            serverHelp.textContent = 'Failed to load servers from NetBox';
+        }
+    }
+
+    loadServers();
+
+    rowSelect.addEventListener('change', function() {
+        rackSelect.value = '';
+        renderServers();
+    });
+    rackSelect.addEventListener('change', renderServers);
+    searchInput.addEventListener('input', renderServers);
+
+    serverSelect.addEventListener('change', async function() {
+        resetDownstream(1);
+        const serverId = this.value;
+        if (!serverId) return;
+
+        interfaceSelect.innerHTML = '<option value="">-- Loading... --</option>';
+        try {
+            const response = await fetch('/api/v1/netbox/servers/' + serverId + '/connections');
+            const result = await response.json();
+            connections = result.status === 'success' ? (result.data || []) : [];
+
+            interfaceSelect.innerHTML = '<option value="">-- Select an Interface --</option>';
+            if (connections.length === 0) {
+                interfaceSelect.innerHTML = '<option value="">-- No interfaces found --</option>';
+                return;
+            }
+            connections.forEach(function(conn, index) {
+                const option = document.createElement('option');
+                option.value = index;
+                if (conn.leaf) {
+                    option.textContent = conn.interface + ' → ' + conn.leaf + ' ' + conn.leaf_interface;
+                } else {
+                    option.textContent = conn.interface + ' (not cabled)';
+                    option.disabled = true;
+                }
+                interfaceSelect.appendChild(option);
+            });
+            interfaceSelect.disabled = false;
+
+            // Preselect when there is exactly one usable interface
+            const usable = connections.filter(c => c.leaf);
+            if (usable.length === 1) {
+                interfaceSelect.value = connections.indexOf(usable[0]);
+                interfaceSelect.dispatchEvent(new Event('change'));
+            }
+        } catch (error) {
+            console.error('Error loading server connections:', error);
+            interfaceSelect.innerHTML = '<option value="">-- Error loading interfaces --</option>';
+        }
+    });
+
+    interfaceSelect.addEventListener('change', async function() {
+        resetDownstream(2);
+        const conn = connections[this.value];
+        if (!conn) return;
+
+        if (!conn.node_id || conn.module == null || conn.port == null) {
+            connectionDiv.innerHTML = '<div class="alert alert-warning mb-0"><i class="bi bi-exclamation-triangle me-1"></i>' +
+                escapeHtml(conn.leaf) + ' ' + escapeHtml(conn.leaf_interface) +
+                ' cannot be mapped to an ACI port. Check that the leaf has an ACI Node ID in NetBox.</div>';
+            connectionDiv.style.display = 'block';
+            return;
+        }
+
+        const portLabel = conn.module + '/' + conn.port;
+        connectionDiv.innerHTML = '<div class="border rounded p-3 bg-light">' +
+            '<div class="small text-muted mb-1"><i class="bi bi-diagram-2 me-1"></i>Resolved from NetBox cabling</div>' +
+            '<div><strong>Leaf:</strong> ' + escapeHtml(conn.leaf) + ' (Node ' + conn.node_id + ')' +
+            ' &nbsp; <strong>Port:</strong> ' + portLabel + '</div></div>';
+        connectionDiv.style.display = 'block';
+
+        epgSelect.innerHTML = '<option value="">-- Loading... --</option>';
+        try {
+            const response = await fetch(
+                '/api/v1/nac/port-available-epgs?node_id=' + conn.node_id + '&module=' + conn.module + '&port=' + conn.port
+            );
+            const result = await response.json();
+
+            if (result.existing && result.existing.length > 0) {
+                const items = result.existing.map(function(epg) {
+                    const badge = epg.mode === 'native' ? 'bg-warning text-dark' :
+                                  epg.mode === 'untagged' ? 'bg-secondary' : 'bg-primary';
+                    return '<li class="list-group-item d-flex justify-content-between align-items-center py-2">' +
+                        '<span><i class="bi bi-check-circle-fill text-success me-2"></i>' + escapeHtml(epg.display) + '</span>' +
+                        '<span class="badge ' + badge + '">' + escapeHtml(epg.mode || 'regular') + '</span></li>';
+                }).join('');
+                existingDiv.innerHTML = '<div class="mb-4"><small class="form-text fw-bold text-muted d-block mb-2">' +
+                    '<i class="bi bi-info-circle me-1"></i>Currently trunked to this server on port ' + portLabel + ':</small>' +
+                    '<ul class="list-group list-group-flush">' + items + '</ul></div>';
+                existingDiv.style.display = 'block';
+            }
+
+            epgSelect.innerHTML = '<option value="">-- Select an EPG --</option>';
+            if (result.status === 'success' && result.data && result.data.length > 0) {
+                result.data.forEach(function(epg) {
+                    const option = document.createElement('option');
+                    option.value = JSON.stringify({
+                        tenant: epg.tenant,
+                        application_profile: epg.application_profile,
+                        endpoint_group: epg.endpoint_group,
+                        vlan: epg.vlan
+                    });
+                    option.textContent = epg.display;
+                    epgSelect.appendChild(option);
+                });
+                epgSelect.disabled = false;
+            } else if (result.status === 'success') {
+                epgSelect.innerHTML = '<option value="">-- No available EPGs for this port --</option>';
+            } else {
+                epgSelect.innerHTML = '<option value="">-- ' + escapeHtml(result.message || 'Error loading EPGs') + ' --</option>';
+            }
+        } catch (error) {
+            console.error('Error loading EPGs:', error);
+            epgSelect.innerHTML = '<option value="">-- Error loading EPGs --</option>';
+        }
+    });
+
+    epgSelect.addEventListener('change', function() {
+        modeSelect.disabled = !this.value;
+        submitBtn.disabled = !this.value;
+        if (this.value) modeSelect.value = 'regular';
+    });
+
+    form.addEventListener('submit', async function(event) {
+        event.preventDefault();
+        const conn = connections[interfaceSelect.value];
+        const server = servers.find(s => String(s.id) === serverSelect.value);
+        if (!epgSelect.value || !conn || !server) return;
+
+        const epgData = JSON.parse(epgSelect.value);
+        const payload = {
+            tenant: epgData.tenant,
+            application_profile: epgData.application_profile,
+            endpoint_group: epgData.endpoint_group,
+            node_id: conn.node_id,
+            module: conn.module,
+            port: conn.port,
+            vlan: epgData.vlan,
+            mode: modeSelect.value,
+            server: {
+                name: server.name,
+                interface: conn.interface,
+                row: server.row,
+                rack: server.rack
+            }
+        };
+
+        const originalText = submitBtn.innerHTML;
+        submitBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Submitting...';
+        submitBtn.disabled = true;
+        responseDiv.style.display = 'none';
+
+        try {
+            const response = await fetch('/api/v1/nac/add-static-port', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+            const result = await response.json();
+
+            if (result.status === 'success') {
+                responseDiv.className = 'alert alert-success';
+                responseDiv.innerHTML = '<strong><i class="bi bi-check-circle me-1"></i>Success!</strong> VLAN ' +
+                    escapeHtml(epgData.vlan) + ' (' + escapeHtml(epgData.endpoint_group) + ') requested for ' +
+                    escapeHtml(server.name) + ' ' + escapeHtml(conn.interface) + ' on ' + escapeHtml(conn.leaf) + ' ' +
+                    conn.module + '/' + conn.port + '. A pull request has been created for review; ' +
+                    'the VLAN shows as trunked here once it is merged.';
+                resetDownstream(2);
+                interfaceSelect.dispatchEvent(new Event('change'));
+            } else {
+                responseDiv.className = 'alert alert-danger';
+                responseDiv.innerHTML = '<strong><i class="bi bi-exclamation-triangle me-1"></i>Error:</strong> ' + escapeHtml(result.message);
+                submitBtn.disabled = false;
+            }
+        } catch (error) {
+            responseDiv.className = 'alert alert-danger';
+            responseDiv.innerHTML = '<strong><i class="bi bi-exclamation-triangle me-1"></i>Error:</strong> ' + escapeHtml(error.message);
+            submitBtn.disabled = false;
+        }
+
+        responseDiv.style.display = 'block';
+        submitBtn.innerHTML = originalText;
+        responseDiv.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    });
+
+    resetBtn.addEventListener('click', function() {
+        form.reset();
+        resetDownstream(1);
+        responseDiv.style.display = 'none';
+        renderServers();
+    });
+}
+
+document.addEventListener('DOMContentLoaded', initializeServerTrunkForm);
+
+
+/**
  * Initialize the VRFs tenant selector and related functionality
  */
 function initializeVrfsTenantSelector(tableInstances) {

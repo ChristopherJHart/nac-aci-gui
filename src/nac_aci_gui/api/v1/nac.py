@@ -1413,6 +1413,16 @@ def add_static_port():
 
         path = f"apic/tenants/name={tenant}/application_profiles/name={app_profile}/endpoint_groups/name={epg}/static_ports"
 
+        # Optional NetBox server context from the "Trunk VLANs to Server" action
+        server = data.get('server')
+        server_title = f" for {server['name']}" if server else ''
+        server_body = (
+            f"- **Server**: {server['name']}"
+            f"{' (' + server['interface'] + ')' if server.get('interface') else ''}\n"
+            f"- **Location**: {server.get('row') or 'N/A'}, Rack {server.get('rack') or 'N/A'}\n"
+            if server else ''
+        )
+
         logger.info(f"Adding static port binding: node {static_port_data['node_id']} port {static_port_data['module']}/{static_port_data['port']} to EPG {epg}")
 
         client = get_nac_client()
@@ -1421,9 +1431,10 @@ def add_static_port():
             data=static_port_data,
             change_message=f"Adding VLAN {static_port_data['vlan']} on node {static_port_data['node_id']} port {static_port_data['module']}/{static_port_data['port']} to EPG {epg} via GUI",
             apply=False,
-            apply_title=data.get('apply_title', f"Add Static Port: node {static_port_data['node_id']} {static_port_data['module']}/{static_port_data['port']} to {epg}"),
+            apply_title=data.get('apply_title', f"Add Static Port: node {static_port_data['node_id']} {static_port_data['module']}/{static_port_data['port']} to {epg}{server_title}"),
             apply_message=data.get('apply_message',
                                    f"## Static Port Binding\n\n"
+                                   f"{server_body}"
                                    f"- **Tenant**: {tenant}\n"
                                    f"- **App Profile**: {app_profile}\n"
                                    f"- **EPG**: {epg}\n"
@@ -1431,7 +1442,7 @@ def add_static_port():
                                    f"- **Port**: {static_port_data['module']}/{static_port_data['port']}\n"
                                    f"- **VLAN**: {static_port_data['vlan']}\n"
                                    f"- **Mode**: {mode}\n"
-                                   f"\nSubmitted via NAC ACI GUI.")
+                                   f"\n{'Leaf port resolved from NetBox cabling. ' if server else ''}Submitted via NAC ACI GUI.")
         )
 
         if response:

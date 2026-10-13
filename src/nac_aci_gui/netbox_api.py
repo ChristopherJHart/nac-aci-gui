@@ -6,6 +6,7 @@ Handles authentication and API interactions with NetBox IPAM
 import requests
 import yaml
 import os
+import re
 from typing import Dict, Any, Optional, List
 import logging
 
@@ -398,6 +399,99 @@ class NetBoxClient:
             Dictionary with device data
         """
         return self.get('/api/dcim/devices/', params=params)
+
+    def get_interfaces(self, params: Optional[Dict] = None) -> Optional[Dict[str, Any]]:
+        """
+        Get interfaces from NetBox
+
+        Args:
+            params: Optional query parameters (e.g., {'device_id': 1})
+
+        Returns:
+            Dictionary with interface data
+        """
+        return self.get('/api/dcim/interfaces/', params=params)
+
+    def get_servers(self) -> Optional[list]:
+        """
+        Get servers from NetBox with their site, row (location) and rack
+
+        Returns:
+            List of server summaries, or None if the request failed
+        """
+        result = self.get_devices({'role': 'server', 'limit': 1000, 'ordering': 'name'})
+        if result is None:
+            return None
+
+        servers = []
+        for device in result.get('results', []):
+            servers.append({
+                'id': device['id'],
+                'name': device['name'],
+                'description': device.get('description', ''),
+                'site': (device.get('site') or {}).get('name'),
+                'row': (device.get('location') or {}).get('name'),
+                'rack': (device.get('rack') or {}).get('name'),
+                'position': device.get('position'),
+            })
+        return servers
+
+    def get_server_connections(self, device_id: int) -> Optional[list]:
+        """
+        Get a server's interfaces and the ACI leaf port each one is cabled to
+
+        Follows each interface's cable to the far-end interface and resolves the
+        leaf's ACI node ID from its ``aci_node_id`` custom field. Interface names
+        of the form ``Ethernet<module>/<port>`` are parsed into module and port.
+
+        Args:
+            device_id: NetBox device ID of the server
+
+        Returns:
+            List of interface connection dicts, or None if the request failed
+        """
+        result = self.get_interfaces({'device_id': device_id, 'limit': 1000})
+        if result is None:
+            return None
+
+        leaf_node_ids = {}
+        connections = []
+        for intf in sorted(result.get('results', []), key=lambda i: i['name']):
+            connection = {
+                'interface_id': intf['id'],
+                'interface': intf['name'],
+                'cabled': intf.get('cable') is not None,
+                'leaf': None,
+                'leaf_device_id': None,
+                'node_id': None,
+                'leaf_interface': None,
+                'module': None,
+                'port': None,
+            }
+
+            far_end = next((
+                peer for peer in intf.get('link_peers') or []
+                if intf.get('link_peers_type') == 'dcim.interface'
+            ), None)
+            if far_end:
+                leaf_id = far_end['device']['id']
+                if leaf_id not in leaf_node_ids:
+                    leaf = self.get(f'/api/dcim/devices/{leaf_id}/')
+                    leaf_node_ids[leaf_id] = ((leaf or {}).get('custom_fields') or {}).get('aci_node_id')
+
+                connection.update({
+                    'leaf': far_end['device']['name'],
+                    'leaf_device_id': leaf_id,
+                    'node_id': leaf_node_ids[leaf_id],
+                    'leaf_interface': far_end['name'],
+                })
+                match = re.fullmatch(r'Ethernet(\d+)/(\d+)', far_end['name'])
+                if match:
+                    connection['module'] = int(match.group(1))
+                    connection['port'] = int(match.group(2))
+
+            connections.append(connection)
+        return connections
 
     def get_locations(self, params: Optional[Dict] = None) -> Optional[Dict[str, Any]]:
         """

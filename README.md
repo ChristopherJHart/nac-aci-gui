@@ -197,6 +197,40 @@ aci:
 
 **Note:** A sample configuration file is provided at `yaml/config.yaml.sample`
 
+## Running with Docker Compose
+
+`docker-compose.yml` runs the portal alongside [nac-api](https://netascode.cisco.com/docs/tools/nac-api/overview/):
+
+```bash
+cp yaml/config.yaml.sample yaml/config.yaml   # then fill in NaC API, ACI and NetBox settings
+docker compose up -d --build                  # portal on :9999, nac-api on :8000
+```
+
+- Set `NACAPI_IMAGE` in `.env` to choose the nac-api image. Pull request titles (`apply_title`) need nac-api built from 0.5.2 or later source.
+- Proxy settings are passed as build args from `HTTP_PROXY`, `HTTPS_PROXY` and `NO_PROXY`.
+- Put environment-specific settings, such as `extra_hosts` or runtime proxy variables, in `docker-compose.override.yml`. Compose loads it automatically, and it is gitignored.
+
+## Trunk VLANs to Server
+
+**Actions → Trunk VLANs to Server** works alongside **Add VLAN to Port**. Instead of choosing a leaf and port, the user finds their server in NetBox:
+
+1. Filter servers by row and rack (NetBox locations and racks), or search by name or description.
+2. Pick one of the server's interfaces. The portal follows the NetBox cable on that interface to the leaf switch and port.
+3. Pick an EPG/VLAN. As in Add VLAN to Port, VLANs already trunked on that port are listed separately and left out of the dropdown.
+4. Submit. The portal opens a pull request that adds the static port binding, with the server and its location in the PR description.
+
+For this to work, NetBox needs:
+
+- Servers with the `server` device role, placed in racks in a location (row)
+- Leaf switches with an integer `aci_node_id` custom field that matches the node ID in the data model
+- Cables from server interfaces to leaf interfaces named `Ethernet<module>/<port>`
+
+`scripts/seed_netbox_dcim.py` seeds a demo layout: three rows, twelve racks, six leaf switches (nodes 101–106) and 48 dual-homed servers. It is idempotent, so you can re-run it safely:
+
+```bash
+uv run python scripts/seed_netbox_dcim.py    # reads NetBox settings from yaml/config.yaml
+```
+
 ## API Documentation
 
 The application includes **interactive API documentation** powered by Swagger/Flasgger.

@@ -471,6 +471,64 @@ def get_sites():
         }), 500
 
 
+@netbox_bp.route('/servers', methods=['GET'])
+def get_servers():
+    """
+    Get servers from NetBox
+    ---
+    tags:
+      - NetBox
+    summary: Get servers
+    description: Retrieves devices with the Server role, including their site, row (location) and rack
+    responses:
+      200:
+        description: List of servers
+      500:
+        description: Failed to retrieve servers
+    """
+    try:
+        client = get_netbox_client()
+        servers = client.get_servers()
+        if servers is not None:
+            return jsonify({'status': 'success', 'data': servers})
+        return jsonify({'status': 'error', 'message': 'Failed to retrieve servers from NetBox'}), 500
+    except Exception as e:
+        logger.error(f"Error getting servers: {str(e)}", exc_info=True)
+        return jsonify({'status': 'error', 'message': f'Failed to retrieve servers: {str(e)}'}), 500
+
+
+@netbox_bp.route('/servers/<int:device_id>/connections', methods=['GET'])
+def get_server_connections(device_id):
+    """
+    Get a server's interfaces and the ACI leaf ports they are cabled to
+    ---
+    tags:
+      - NetBox
+    summary: Get server connections
+    description: Follows each server interface's cable to its leaf switch and port, resolving the leaf's ACI node ID
+    parameters:
+      - name: device_id
+        in: path
+        type: integer
+        required: true
+        description: NetBox device ID of the server
+    responses:
+      200:
+        description: List of server interfaces with their leaf connections
+      500:
+        description: Failed to retrieve connections
+    """
+    try:
+        client = get_netbox_client()
+        connections = client.get_server_connections(device_id)
+        if connections is not None:
+            return jsonify({'status': 'success', 'data': connections})
+        return jsonify({'status': 'error', 'message': 'Failed to retrieve server connections from NetBox'}), 500
+    except Exception as e:
+        logger.error(f"Error getting server connections: {str(e)}", exc_info=True)
+        return jsonify({'status': 'error', 'message': f'Failed to retrieve server connections: {str(e)}'}), 500
+
+
 @netbox_bp.route('/devices', methods=['GET'])
 def get_devices():
     """
