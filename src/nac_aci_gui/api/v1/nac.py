@@ -659,7 +659,13 @@ def merge_vrf():
             data=vrf_data,
             change_message=data.get('change_message', f"Adding VRF {data['name']}"),
             apply=data.get('apply', False),
-            apply_message=data.get('apply_message'),
+            apply_title=data.get('apply_title', f"Add VXLAN VRF: {data['name']}"),
+            apply_message=data.get('apply_message',
+                                   f"## VRF Configuration\n\n"
+                                   f"- **VRF Name**: {data['name']}\n"
+                                   f"- **VRF ID**: {data['vrf_id']}\n"
+                                   f"- **VLAN ID**: {data['vlan_id']}\n"
+                                   f"\nSubmitted via NAC ACI GUI."),
             source=data.get('source')
         )
 
@@ -866,7 +872,14 @@ def merge_network():
             data=network_data,
             change_message=data.get('change_message', f"Adding network {data['name']}"),
             apply=data.get('apply', False),
-            apply_message=data.get('apply_message'),
+            apply_title=data.get('apply_title', f"Add VXLAN Network: {data['name']}"),
+            apply_message=data.get('apply_message',
+                                   f"## Network Configuration\n\n"
+                                   f"- **Network Name**: {data['name']}\n"
+                                   f"- **VRF**: {data.get('vrf_name', 'N/A')}\n"
+                                   f"- **Network ID**: {data.get('net_id', 'N/A')}\n"
+                                   f"- **VLAN ID**: {data.get('vlan_id', 'N/A')}\n"
+                                   f"\nSubmitted via NAC ACI GUI."),
             source=data.get('source')
         )
 
@@ -1054,7 +1067,15 @@ def create_network():
             path=path,
             data=bd_data,
             change_message=f"Creating bridge domain {network_name} in tenant {tenant}",
-            apply=False  # Don't auto-apply, let user review
+            apply=False,  # Don't auto-apply, let user review
+            apply_title=f"Add Bridge Domain: {network_name} (tenant: {tenant})",
+            apply_message=f"## Bridge Domain Configuration\n\n"
+                          f"- **Tenant**: {tenant}\n"
+                          f"- **VRF**: {vrf}\n"
+                          f"- **Bridge Domain**: {network_name}\n"
+                          f"- **Subnet**: {gateway_ip}\n"
+                          f"- **Allocated Prefix**: {allocated_prefix}\n"
+                          f"\nSubnet allocated from NetBox. Submitted via NAC ACI GUI."
         )
 
         if response:
@@ -1146,7 +1167,12 @@ def create_tenant():
             path='apic/tenants',
             data=tenant_data,
             change_message=f"Creating tenant {name} via GUI",
-            apply=False
+            apply=False,
+            apply_title=f"Add Tenant: {name}",
+            apply_message=f"## Tenant Configuration\n\n"
+                          f"- **Tenant Name**: {name}\n"
+                          f"- **Description**: {description or 'N/A'}\n"
+                          f"\nTenant also created in NetBox. Submitted via NAC ACI GUI."
         )
 
         if nac_response:
@@ -1246,7 +1272,13 @@ def create_vrf():
             path=f'apic/tenants/name={tenant}/vrfs',
             data=vrf_data,
             change_message=f"Creating VRF {name} in tenant {tenant} via GUI",
-            apply=False
+            apply=False,
+            apply_title=f"Add VRF: {name} (tenant: {tenant})",
+            apply_message=f"## VRF Configuration\n\n"
+                          f"- **Tenant**: {tenant}\n"
+                          f"- **VRF Name**: {name}\n"
+                          f"- **Description**: {description or 'N/A'}\n"
+                          f"\nVRF also created in NetBox. Submitted via NAC ACI GUI."
         )
 
         if nac_response:
@@ -1388,7 +1420,18 @@ def add_static_port():
             path=path,
             data=static_port_data,
             change_message=f"Adding VLAN {static_port_data['vlan']} on node {static_port_data['node_id']} port {static_port_data['module']}/{static_port_data['port']} to EPG {epg} via GUI",
-            apply=False
+            apply=False,
+            apply_title=data.get('apply_title', f"Add Static Port: node {static_port_data['node_id']} {static_port_data['module']}/{static_port_data['port']} to {epg}"),
+            apply_message=data.get('apply_message',
+                                   f"## Static Port Binding\n\n"
+                                   f"- **Tenant**: {tenant}\n"
+                                   f"- **App Profile**: {app_profile}\n"
+                                   f"- **EPG**: {epg}\n"
+                                   f"- **Node ID**: {static_port_data['node_id']}\n"
+                                   f"- **Port**: {static_port_data['module']}/{static_port_data['port']}\n"
+                                   f"- **VLAN**: {static_port_data['vlan']}\n"
+                                   f"- **Mode**: {mode}\n"
+                                   f"\nSubmitted via NAC ACI GUI.")
         )
 
         if response:

@@ -727,6 +727,7 @@ class NacApiClient:
     def _operation_request(self, operation_type: str, path: str, data: Any,
                           change_message: Optional[str] = None,
                           apply: bool = False,
+                          apply_title: Optional[str] = None,
                           apply_message: Optional[str] = None,
                           source: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
         """
@@ -738,7 +739,8 @@ class NacApiClient:
             data: Data payload for the operation
             change_message: Optional message describing the change
             apply: Whether to apply the changeset immediately
-            apply_message: Optional message for the apply operation
+            apply_title: Optional pull/merge request title
+            apply_message: Optional message for the apply operation (pull/merge request body)
             source: Optional source information
 
         Returns:
@@ -764,6 +766,9 @@ class NacApiClient:
         if apply is not None:
             operation_payload["operation"]["apply"] = apply
 
+        if apply_title:
+            operation_payload["operation"]["apply_title"] = apply_title
+
         if apply_message:
             operation_payload["operation"]["apply_message"] = apply_message
 
@@ -779,6 +784,7 @@ class NacApiClient:
     def batch_operation(self, changes: list,
                        changeset: Optional[str] = None,
                        apply: bool = False,
+                       apply_title: Optional[str] = None,
                        apply_message: Optional[str] = None,
                        source: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
         """
@@ -795,7 +801,8 @@ class NacApiClient:
                 - file: Optional file reference
             changeset: Optional changeset identifier
             apply: Whether to apply the changeset immediately
-            apply_message: Optional message for the apply operation
+            apply_title: Optional pull/merge request title
+            apply_message: Optional message for the apply operation (pull/merge request body)
             source: Optional source information (dict with 'name' and 'repository' keys)
 
         Returns:
@@ -834,6 +841,9 @@ class NacApiClient:
         if changeset:
             batch_payload["operation"]["changeset"] = changeset
 
+        if apply_title:
+            batch_payload["operation"]["apply_title"] = apply_title
+
         if apply_message:
             batch_payload["operation"]["apply_message"] = apply_message
 
@@ -848,6 +858,7 @@ class NacApiClient:
     def merge_operation(self, path: str, data: Any,
                        change_message: Optional[str] = None,
                        apply: bool = False,
+                       apply_title: Optional[str] = None,
                        apply_message: Optional[str] = None,
                        source: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
         """
@@ -858,17 +869,19 @@ class NacApiClient:
             data: Data payload for the merge operation (list or single item)
             change_message: Optional message describing the change
             apply: Whether to apply the changeset immediately
-            apply_message: Optional message for the apply operation
+            apply_title: Optional pull/merge request title
+            apply_message: Optional message for the apply operation (pull/merge request body)
             source: Optional source information
 
         Returns:
             Response JSON data or None if request failed
         """
-        return self._operation_request("merge", path, data, change_message, apply, apply_message, source)
+        return self._operation_request("merge", path, data, change_message, apply, apply_title, apply_message, source)
 
     def replace_operation(self, path: str, data: Any,
                          change_message: Optional[str] = None,
                          apply: bool = False,
+                         apply_title: Optional[str] = None,
                          apply_message: Optional[str] = None,
                          source: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
         """
@@ -879,17 +892,19 @@ class NacApiClient:
             data: Data payload for the replace operation (list or single item)
             change_message: Optional message describing the change
             apply: Whether to apply the changeset immediately
-            apply_message: Optional message for the apply operation
+            apply_title: Optional pull/merge request title
+            apply_message: Optional message for the apply operation (pull/merge request body)
             source: Optional source information
 
         Returns:
             Response JSON data or None if request failed
         """
-        return self._operation_request("replace", path, data, change_message, apply, apply_message, source)
+        return self._operation_request("replace", path, data, change_message, apply, apply_title, apply_message, source)
 
     def delete_operation(self, path: str, data: Any,
                         change_message: Optional[str] = None,
                         apply: bool = False,
+                        apply_title: Optional[str] = None,
                         apply_message: Optional[str] = None,
                         source: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
         """
@@ -900,17 +915,19 @@ class NacApiClient:
             data: Data payload for the delete operation (list or single item)
             change_message: Optional message describing the change
             apply: Whether to apply the changeset immediately
-            apply_message: Optional message for the apply operation
+            apply_title: Optional pull/merge request title
+            apply_message: Optional message for the apply operation (pull/merge request body)
             source: Optional source information
 
         Returns:
             Response JSON data or None if request failed
         """
-        return self._operation_request("delete", path, data, change_message, apply, apply_message, source)
+        return self._operation_request("delete", path, data, change_message, apply, apply_title, apply_message, source)
 
     def create_operation(self, path: str, data: Any,
                         change_message: Optional[str] = None,
                         apply: bool = False,
+                        apply_title: Optional[str] = None,
                         apply_message: Optional[str] = None,
                         source: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
         """
@@ -921,17 +938,19 @@ class NacApiClient:
             data: Data payload for the create operation (list or single item)
             change_message: Optional message describing the change
             apply: Whether to apply the changeset immediately
-            apply_message: Optional message for the apply operation
+            apply_title: Optional pull/merge request title
+            apply_message: Optional message for the apply operation (pull/merge request body)
             source: Optional source information
 
         Returns:
             Response JSON data or None if request failed
         """
-        return self._operation_request("create", path, data, change_message, apply, apply_message, source)
+        return self._operation_request("create", path, data, change_message, apply, apply_title, apply_message, source)
 
     def apply_operation(self, path: str, data: Any,
                        change_message: Optional[str] = None,
                        apply: bool = False,
+                       apply_title: Optional[str] = None,
                        apply_message: Optional[str] = None,
                        source: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
         """
@@ -942,13 +961,14 @@ class NacApiClient:
             data: Data payload for the apply operation (list or single item)
             change_message: Optional message describing the change
             apply: Whether to apply the changeset immediately
-            apply_message: Optional message for the apply operation
+            apply_title: Optional pull/merge request title
+            apply_message: Optional message for the apply operation (pull/merge request body)
             source: Optional source information
 
         Returns:
             Response JSON data or None if request failed
         """
-        return self._operation_request("apply", path, data, change_message, apply, apply_message, source)
+        return self._operation_request("apply", path, data, change_message, apply, apply_title, apply_message, source)
 
     def close(self):
         """Close the session"""
