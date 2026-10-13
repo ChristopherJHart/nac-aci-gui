@@ -2485,8 +2485,8 @@ function initializeServerTrunkForm() {
         }
 
         const portLabel = conn.module + '/' + conn.port;
-        connectionDiv.innerHTML = '<div class="border rounded p-3 bg-light">' +
-            '<div class="small text-muted mb-1"><i class="bi bi-diagram-2 me-1"></i>Resolved from NetBox cabling</div>' +
+        connectionDiv.innerHTML = '<div class="resolved-connection rounded p-3">' +
+            '<div class="resolved-connection-label small mb-1"><i class="bi bi-diagram-2 me-1"></i>Resolved from NetBox cabling</div>' +
             '<div><strong>Leaf:</strong> ' + escapeHtml(conn.leaf) + ' (Node ' + conn.node_id + ')' +
             ' &nbsp; <strong>Port:</strong> ' + portLabel + '</div></div>';
         connectionDiv.style.display = 'block';

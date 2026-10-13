@@ -922,3 +922,24 @@ input[data-has-value="true"]:focus {
 .spinner-border {
     vertical-align: middle;
 }
+
+/* Leaf port resolved from NetBox cabling (Trunk VLANs to Server) */
+.resolved-connection {
+    background-color: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-left: 4px solid var(--bs-primary, #0d6efd);
+    color: var(--text-primary);
+}
+
+.resolved-connection-label {
+    color: #495057;
+    font-weight: 600;
+}
+
+[data-theme="dark"] .resolved-connection {
+    background-color: var(--bg-tertiary);
+}
+
+[data-theme="dark"] .resolved-connection-label {
+    color: var(--text-secondary);
+}
