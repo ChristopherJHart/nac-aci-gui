@@ -287,6 +287,33 @@ body {
     color: var(--text-primary);
 }
 
+/* Bootstrap colours .alert-link for a light alert background; the dark theme
+   repaints alerts dark, so give links a light shade of each alert's hue. */
+[data-theme="dark"] .alert .alert-link,
+[data-theme="dark"] .alert a {
+    color: #8ab4ff;
+}
+
+[data-theme="dark"] .alert-success .alert-link,
+[data-theme="dark"] .alert-success a {
+    color: #75d6a3;
+}
+
+[data-theme="dark"] .alert-danger .alert-link,
+[data-theme="dark"] .alert-danger a {
+    color: #ff9a9a;
+}
+
+[data-theme="dark"] .alert-warning .alert-link,
+[data-theme="dark"] .alert-warning a {
+    color: #ffd666;
+}
+
+[data-theme="dark"] .alert-info .alert-link,
+[data-theme="dark"] .alert-info a {
+    color: #7dd3f0;
+}
+
 [data-theme="dark"] .page-header {
     border-color: var(--border-color);
 }
