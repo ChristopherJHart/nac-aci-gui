@@ -943,3 +943,27 @@ input[data-has-value="true"]:focus {
 [data-theme="dark"] .resolved-connection-label {
     color: var(--text-secondary);
 }
+
+/* Change request email status shown inside success alerts */
+.change-request-notice {
+    border-top: 1px solid rgba(0, 0, 0, 0.15);
+    padding-top: 0.5rem;
+}
+
+.change-request-notice.change-request-failed {
+    background-color: #fff3cd;
+    border: 1px solid #ffc107;
+    border-radius: 0.375rem;
+    color: #664d03;
+    padding: 0.5rem 0.75rem;
+}
+
+[data-theme="dark"] .change-request-notice {
+    border-top-color: rgba(255, 255, 255, 0.2);
+}
+
+[data-theme="dark"] .change-request-notice.change-request-failed {
+    background-color: #332701;
+    border-color: #997404;
+    color: #ffda6a;
+}

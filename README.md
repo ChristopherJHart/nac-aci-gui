@@ -210,6 +210,24 @@ docker compose up -d --build                  # portal on :9999, nac-api on :800
 - Proxy settings are passed as build args from `HTTP_PROXY`, `HTTPS_PROXY` and `NO_PROXY`.
 - Put environment-specific settings, such as `extra_hosts` or runtime proxy variables, in `docker-compose.override.yml`. Compose loads it automatically, and it is gitignored.
 
+## Change Request Emails
+
+Every action that opens a pull request also emails a change request mailing list. The intent is for an ITSM intake, such as a ServiceNow inbound email action, to raise a change request from it. Each email has a subject like `[Network Change Request] Add VLAN 31 (Monitoring-EPG) to server niaid-hpc-41 eth0 via node 106 port 1/1`. It is sent as plain text plus HTML, and both parts carry the change details and a link to the pull request.
+
+All settings are environment variables, kept in `.env`, so no credentials live in the repository (see `.env.sample`):
+
+| Variable | Purpose |
+|---|---|
+| `SMTP_HOST`, `SMTP_PORT` | SMTP relay (port defaults to 25) |
+| `SMTP_USERNAME`, `SMTP_PASSWORD` | Account used to authenticate to the relay |
+| `CHANGE_REQUEST_EMAIL_TO` | Recipient list, comma separated |
+| `CHANGE_REQUEST_EMAIL_FROM` | Sender (defaults to `SMTP_USERNAME`) |
+
+- The connection is always upgraded with STARTTLS (TLS 1.2 or later, certificate verified) before authenticating.
+- If `SMTP_HOST` or `CHANGE_REQUEST_EMAIL_TO` is unset, no email is sent.
+- If sending fails, the pull request is kept and the success message warns that no change request was raised.
+- Wrap values containing `$` in single quotes in `.env`, so Compose does not treat them as variables.
+
 ## Trunk VLANs to Server
 
 **Actions → Trunk VLANs to Server** works alongside **Add VLAN to Port**. Instead of choosing a leaf and port, the user finds their server in NetBox:

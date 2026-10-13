@@ -1237,7 +1237,8 @@ function initializeNacActionFormHandlers() {
                 const result = await response.json();
 
                 if (result.status === 'success') {
-                    responseDiv.innerHTML = `<strong><i class="bi bi-check-circle me-2"></i>Success!</strong><p class="mb-0 mt-2">${result.message}</p>`;
+                    responseDiv.innerHTML = `<strong><i class="bi bi-check-circle me-2"></i>Success!</strong><p class="mb-0 mt-2">${result.message}. ${pullRequestSentence(result.pull_request_url)}</p>` +
+                        changeRequestNotice(result.change_request);
                     responseDiv.className = 'alert alert-success';
                     responseDiv.style.display = 'block';
 
@@ -1319,7 +1320,8 @@ function initializeNacActionFormHandlers() {
                 const result = await response.json();
 
                 if (result.status === 'success') {
-                    responseDiv.innerHTML = `<strong><i class="bi bi-check-circle me-2"></i>Success!</strong><p class="mb-0 mt-2">${result.message}</p>`;
+                    responseDiv.innerHTML = `<strong><i class="bi bi-check-circle me-2"></i>Success!</strong><p class="mb-0 mt-2">${result.message}. ${pullRequestSentence(result.pull_request_url)}</p>` +
+                        changeRequestNotice(result.change_request);
                     responseDiv.className = 'alert alert-success';
                     responseDiv.style.display = 'block';
 
@@ -1811,7 +1813,9 @@ function initializeCreateNetworkForm() {
                     networkName: resultData.network_name,
                     subnet: resultData.subnet,
                     allocatedPrefix: resultData.allocated_prefix,
-                    bridgeDomain: resultData.bridge_domain
+                    bridgeDomain: resultData.bridge_domain,
+                    pullRequestUrl: data.pull_request_url,
+                    changeRequest: data.change_request
                 });
 
                 // Reset form
@@ -1858,7 +1862,8 @@ function showCreateNetworkResultModal(success, data) {
         const yamlContent = objectToYaml(data.bridgeDomain);
         bodyContent = `
             <div class="alert alert-success">
-                <i class="bi bi-check-circle me-2"></i>${data.message}
+                <i class="bi bi-check-circle me-2"></i>${data.message}. ${pullRequestSentence(data.pullRequestUrl)}
+                ${changeRequestNotice(data.changeRequest)}
             </div>
             <div class="row">
                 <div class="col-md-6">
@@ -1974,7 +1979,8 @@ function initializeCreateTenantForm() {
 
             if (result.status === 'success') {
                 responseDiv.className = 'alert alert-success';
-                responseDiv.innerHTML = `<strong><i class="bi bi-check-circle me-1"></i>Success!</strong> Tenant <strong>${name}</strong> created in both NetBox and the NaC data model. A pull request has been created for review.`;
+                responseDiv.innerHTML = `<strong><i class="bi bi-check-circle me-1"></i>Success!</strong> Tenant <strong>${name}</strong> created in both NetBox and the NaC data model. ${pullRequestSentence(result.pull_request_url)}` +
+                    changeRequestNotice(result.change_request);
                 form.reset();
             } else {
                 responseDiv.className = 'alert alert-danger';
@@ -2067,7 +2073,8 @@ function initializeCreateTenantVrfForm() {
 
             if (result.status === 'success') {
                 responseDiv.className = 'alert alert-success';
-                responseDiv.innerHTML = `<strong><i class="bi bi-check-circle me-1"></i>Success!</strong> VRF <strong>${name}</strong> created in tenant <strong>${tenant}</strong> in both NetBox and the NaC data model. A pull request has been created for review.`;
+                responseDiv.innerHTML = `<strong><i class="bi bi-check-circle me-1"></i>Success!</strong> VRF <strong>${name}</strong> created in tenant <strong>${tenant}</strong> in both NetBox and the NaC data model. ${pullRequestSentence(result.pull_request_url)}` +
+                    changeRequestNotice(result.change_request);
                 form.reset();
                 loadTenants();
             } else {
@@ -2108,6 +2115,30 @@ function pullRequestSentence(url) {
         return 'Review ' + link.outerHTML + ' <i class="bi bi-box-arrow-up-right small"></i> before it is merged.';
     }
     return 'A pull request has been created for review.';
+}
+
+
+/**
+ * Describe the change request email sent for an operation
+ *
+ * Returns an HTML snippet: a confirmation when the email was sent, a warning when
+ * sending failed (the pull request still exists), and nothing when email is disabled.
+ */
+function changeRequestNotice(changeRequest) {
+    if (!changeRequest || changeRequest.message === 'Change request email is not configured') return '';
+    const escape = function(value) {
+        const div = document.createElement('div');
+        div.textContent = value == null ? '' : String(value);
+        return div.innerHTML;
+    };
+    if (changeRequest.sent) {
+        return '<div class="change-request-notice mt-2 small"><i class="bi bi-envelope-check me-1"></i>' +
+            'Change request emailed to ' + escape((changeRequest.recipients || []).join(', ')) +
+            ' to open a ServiceNow change.</div>';
+    }
+    return '<div class="change-request-notice change-request-failed mt-2 small"><i class="bi bi-envelope-exclamation me-1"></i>' +
+        '<strong>Change request email was not sent</strong>, so no ServiceNow change has been opened. ' +
+        'The pull request was still created. <span class="d-block mt-1 opacity-75">' + escape(changeRequest.message) + '</span></div>';
 }
 
 
@@ -2290,7 +2321,8 @@ function initializeAddStaticPortForm() {
 
             if (result.status === 'success') {
                 responseDiv.className = 'alert alert-success';
-                responseDiv.innerHTML = '<strong><i class="bi bi-check-circle me-1"></i>Success!</strong> ' + result.message + '. ' + pullRequestSentence(result.pull_request_url);
+                responseDiv.innerHTML = '<strong><i class="bi bi-check-circle me-1"></i>Success!</strong> ' + result.message + '. ' + pullRequestSentence(result.pull_request_url) +
+                    changeRequestNotice(result.change_request);
                 form.reset();
                 resetDownstream(1);
                 loadLeafNodes();
@@ -2603,7 +2635,8 @@ function initializeServerTrunkForm() {
                     escapeHtml(epgData.vlan) + ' (' + escapeHtml(epgData.endpoint_group) + ') requested for ' +
                     escapeHtml(server.name) + ' ' + escapeHtml(conn.interface) + ' on ' + escapeHtml(conn.leaf) + ' ' +
                     conn.module + '/' + conn.port + '. ' + pullRequestSentence(result.pull_request_url) +
-                    ' The VLAN shows as trunked here once it is merged.';
+                    ' The VLAN shows as trunked here once it is merged.' +
+                    changeRequestNotice(result.change_request);
                 resetDownstream(2);
                 interfaceSelect.dispatchEvent(new Event('change'));
             } else {

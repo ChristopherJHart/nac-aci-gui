@@ -2,6 +2,7 @@
 NaC API endpoints for UI
 """
 from flask import Blueprint, jsonify, request
+from ...change_request import ChangeRequest, current_requester, send_change_request
 from ...nac_api import get_nac_client
 from ...netbox_api import get_netbox_client
 import logging
@@ -9,10 +10,28 @@ import yaml
 import os
 from pathlib import Path
 import re
+from typing import Optional
 
 logger = logging.getLogger(__name__)
 
 nac_bp = Blueprint('nac', __name__)
+
+
+def _notify_change(client, nac_response, action: str, summary: str, details: list) -> tuple[Optional[str], dict]:
+    """
+    Resolve the pull request behind a NaC API operation and email a change request for it
+
+    Returns the pull request URL (or None) and the email outcome, for inclusion in the response.
+    """
+    pull_request_url = client.get_pull_request_url(nac_response)
+    result = send_change_request(ChangeRequest(
+        action=action,
+        summary=summary,
+        details=details,
+        pull_request_url=pull_request_url,
+        requested_by=current_requester(),
+    ))
+    return pull_request_url, result.to_dict()
 
 
 def _generate_slug(name: str) -> str:
@@ -671,9 +690,14 @@ def merge_vrf():
 
         if response:
             logger.info(f"VRF merged successfully: {data['name']}")
+            pull_request_url, change_request = _notify_change(
+                client, response, 'Add VXLAN VRF', f"Add VXLAN VRF {data['name']}",
+                [('VRF Name', data['name']), ('VRF ID', data['vrf_id']), ('VLAN ID', data['vlan_id'])])
             return jsonify({
                 'status': 'success',
                 'message': f"VRF '{data['name']}' merged successfully",
+                'pull_request_url': pull_request_url,
+                'change_request': change_request,
                 'data': response
             })
         else:
@@ -885,9 +909,15 @@ def merge_network():
 
         if response:
             logger.info(f"Network merged successfully: {data['name']}")
+            pull_request_url, change_request = _notify_change(
+                client, response, 'Add VXLAN Network', f"Add VXLAN network {data['name']}",
+                [('Network Name', data['name']), ('VRF', data.get('vrf_name', 'N/A')),
+                 ('Network ID', data.get('net_id', 'N/A')), ('VLAN ID', data.get('vlan_id', 'N/A'))])
             return jsonify({
                 'status': 'success',
                 'message': f"Network '{data['name']}' merged successfully",
+                'pull_request_url': pull_request_url,
+                'change_request': change_request,
                 'data': response
             })
         else:
@@ -1080,9 +1110,16 @@ def create_network():
 
         if response:
             logger.info(f"Network created successfully: {network_name}")
+            pull_request_url, change_request = _notify_change(
+                nac_client, response, 'Create Network (Bridge Domain)',
+                f"Create network {network_name} in tenant {tenant}",
+                [('Tenant', tenant), ('VRF', vrf), ('Bridge Domain', network_name),
+                 ('Gateway Subnet', gateway_ip), ('Allocated Prefix', f"{allocated_prefix} (from NetBox)")])
             return jsonify({
                 'status': 'success',
                 'message': f"Network '{network_name}' created successfully",
+                'pull_request_url': pull_request_url,
+                'change_request': change_request,
                 'data': {
                     'tenant': tenant,
                     'vrf': vrf,
@@ -1177,9 +1214,15 @@ def create_tenant():
 
         if nac_response:
             logger.info(f"Tenant created in NaC data model: {name}")
+            pull_request_url, change_request = _notify_change(
+                nac_client, nac_response, 'Create Tenant', f"Create tenant {name}",
+                [('Tenant Name', name), ('Description', description or 'N/A'),
+                 ('NetBox', 'Tenant created in NetBox')])
             return jsonify({
                 'status': 'success',
                 'message': f"Tenant '{name}' created successfully",
+                'pull_request_url': pull_request_url,
+                'change_request': change_request,
                 'data': {
                     'name': name,
                     'description': description,
@@ -1283,9 +1326,15 @@ def create_vrf():
 
         if nac_response:
             logger.info(f"VRF created in NaC data model: {name}")
+            pull_request_url, change_request = _notify_change(
+                nac_client, nac_response, 'Create VRF', f"Create VRF {name} in tenant {tenant}",
+                [('Tenant', tenant), ('VRF Name', name), ('Description', description or 'N/A'),
+                 ('NetBox', 'VRF created in NetBox')])
             return jsonify({
                 'status': 'success',
                 'message': f"VRF '{name}' created successfully in tenant '{tenant}'",
+                'pull_request_url': pull_request_url,
+                'change_request': change_request,
                 'data': {
                     'tenant': tenant,
                     'name': name,
@@ -1446,10 +1495,26 @@ def add_static_port():
         )
 
         if response:
+            port_label = f"{static_port_data['module']}/{static_port_data['port']}"
+            details = []
+            if server:
+                details += [('Server', f"{server['name']} ({server.get('interface') or 'N/A'})"),
+                            ('Server Location', f"{server.get('row') or 'N/A'}, Rack {server.get('rack') or 'N/A'}")]
+            details += [('Leaf Node', static_port_data['node_id']), ('Leaf Port', port_label),
+                        ('VLAN', static_port_data['vlan']), ('Mode', mode),
+                        ('Tenant', tenant), ('Application Profile', app_profile), ('EPG', epg)]
+            pull_request_url, change_request = _notify_change(
+                client, response,
+                'Trunk VLANs to Server' if server else 'Add VLAN to Port',
+                f"Add VLAN {static_port_data['vlan']} ({epg}) to "
+                + (f"server {server['name']} {server.get('interface') or ''} via " if server else '')
+                + f"node {static_port_data['node_id']} port {port_label}",
+                details)
             return jsonify({
                 'status': 'success',
                 'message': f"Static port binding added: VLAN {static_port_data['vlan']} on node {static_port_data['node_id']} port {static_port_data['module']}/{static_port_data['port']} → EPG {epg}",
-                'pull_request_url': client.get_pull_request_url(response),
+                'pull_request_url': pull_request_url,
+                'change_request': change_request,
                 'data': {
                     'tenant': tenant,
                     'application_profile': app_profile,
