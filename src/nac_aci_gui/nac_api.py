@@ -6,6 +6,7 @@ Handles authentication and API interactions with Network-as-Code API
 import requests
 import yaml
 import os
+import re
 from typing import Dict, Any, Optional
 import logging
 
@@ -969,6 +970,56 @@ class NacApiClient:
             Response JSON data or None if request failed
         """
         return self._operation_request("apply", path, data, change_message, apply, apply_title, apply_message, source)
+
+    def get_pull_request_url(self, operation_response: Optional[Dict[str, Any]]) -> Optional[str]:
+        """
+        Resolve the web URL of the pull request behind a NaC API operation
+
+        Unapplied operations return the changeset branch as their artefact, so the
+        pull request is looked up on the SCM by its head branch. Only GitHub
+        (including GitHub Enterprise) is supported; other providers return None.
+
+        Args:
+            operation_response: Response JSON from an operation request
+
+        Returns:
+            Pull request web URL, or None if it cannot be determined
+        """
+        if not operation_response or self.scm_provider != 'github':
+            return None
+
+        artefact = operation_response.get('artefact')
+        if operation_response.get('artefact_type') == 'url' and artefact:
+            # Applied operations return the API URL of the merged pull request
+            match = re.search(r'/repos/([^/]+/[^/]+)/pulls/(\d+)$', artefact)
+            if match:
+                return f"{self._scm_web_url()}/{match.group(1)}/pull/{match.group(2)}"
+            return None
+        if operation_response.get('artefact_type') != 'git_branch' or not artefact:
+            return None
+
+        owner = self.repository_url.split('/')[0]
+        try:
+            response = requests.get(
+                f"{self.scm_api_url.rstrip('/')}/repos/{self.repository_url}/pulls",
+                params={'head': f"{owner}:{artefact}", 'state': 'all'},
+                headers={'Authorization': f'token {self.api_key}', 'Accept': 'application/vnd.github+json'},
+                timeout=15,
+            )
+            response.raise_for_status()
+            pulls = response.json()
+        except (requests.exceptions.RequestException, ValueError) as e:
+            logger.warning(f"Could not look up pull request for changeset '{artefact}': {str(e)}")
+            return None
+
+        return pulls[0].get('html_url') if pulls else None
+
+    def _scm_web_url(self) -> str:
+        """Derive the SCM web URL from its API URL (github.com or GitHub Enterprise)"""
+        api_url = self.scm_api_url.rstrip('/')
+        if api_url == 'https://api.github.com':
+            return 'https://github.com'
+        return re.sub(r'/api/v3$', '', api_url)
 
     def close(self):
         """Close the session"""

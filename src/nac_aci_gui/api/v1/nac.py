@@ -1449,6 +1449,7 @@ def add_static_port():
             return jsonify({
                 'status': 'success',
                 'message': f"Static port binding added: VLAN {static_port_data['vlan']} on node {static_port_data['node_id']} port {static_port_data['module']}/{static_port_data['port']} → EPG {epg}",
+                'pull_request_url': client.get_pull_request_url(response),
                 'data': {
                     'tenant': tenant,
                     'application_profile': app_profile,

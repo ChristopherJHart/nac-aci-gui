@@ -2095,6 +2095,23 @@ document.addEventListener('DOMContentLoaded', initializeCreateTenantVrfForm);
 
 
 /**
+ * Describe the pull request created by an operation, linking to it when the URL is known
+ */
+function pullRequestSentence(url) {
+    if (url && /^https?:\/\//.test(url)) {
+        const link = document.createElement('a');
+        link.href = url;
+        link.target = '_blank';
+        link.rel = 'noopener noreferrer';
+        link.className = 'alert-link';
+        link.textContent = 'pull request #' + (url.match(/\/pull\/(\d+)/) || [, ''])[1];
+        return 'Review ' + link.outerHTML + ' <i class="bi bi-box-arrow-up-right small"></i> before it is merged.';
+    }
+    return 'A pull request has been created for review.';
+}
+
+
+/**
  * Initialize the Add VLAN to Trunk Port form (cascading dropdowns)
  */
 function initializeAddStaticPortForm() {
@@ -2273,7 +2290,7 @@ function initializeAddStaticPortForm() {
 
             if (result.status === 'success') {
                 responseDiv.className = 'alert alert-success';
-                responseDiv.innerHTML = '<strong><i class="bi bi-check-circle me-1"></i>Success!</strong> ' + result.message + '. A pull request has been created for review.';
+                responseDiv.innerHTML = '<strong><i class="bi bi-check-circle me-1"></i>Success!</strong> ' + result.message + '. ' + pullRequestSentence(result.pull_request_url);
                 form.reset();
                 resetDownstream(1);
                 loadLeafNodes();
@@ -2585,8 +2602,8 @@ function initializeServerTrunkForm() {
                 responseDiv.innerHTML = '<strong><i class="bi bi-check-circle me-1"></i>Success!</strong> VLAN ' +
                     escapeHtml(epgData.vlan) + ' (' + escapeHtml(epgData.endpoint_group) + ') requested for ' +
                     escapeHtml(server.name) + ' ' + escapeHtml(conn.interface) + ' on ' + escapeHtml(conn.leaf) + ' ' +
-                    conn.module + '/' + conn.port + '. A pull request has been created for review; ' +
-                    'the VLAN shows as trunked here once it is merged.';
+                    conn.module + '/' + conn.port + '. ' + pullRequestSentence(result.pull_request_url) +
+                    ' The VLAN shows as trunked here once it is merged.';
                 resetDownstream(2);
                 interfaceSelect.dispatchEvent(new Event('change'));
             } else {
