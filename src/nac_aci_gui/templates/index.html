@@ -97,15 +97,9 @@
                             </a>
                         </li>
                         <li class="sidebar-item">
-                            <a href="#" class="sidebar-link" data-page="server-trunk" data-parent="action">
+                            <a href="#" class="sidebar-link" data-page="server-connections" data-parent="action">
                                 <i class="bi bi-server"></i>
-                                <span>Trunk VLANs to Server</span>
-                            </a>
-                        </li>
-                        <li class="sidebar-item">
-                            <a href="#" class="sidebar-link" data-page="move-server" data-parent="action">
-                                <i class="bi bi-arrow-left-right"></i>
-                                <span>Move Server</span>
+                                <span>Server Connections</span>
                             </a>
                         </li>
                     </ul>
@@ -794,171 +788,120 @@
                     </div>
                 </div>
 
-                <!-- Trunk VLANs to Server Page -->
-                <div id="page-server-trunk" class="page-content">
+                <!-- Server Connections Page -->
+                <div id="page-server-connections" class="page-content">
                     <div class="page-header mb-4">
-                        <h2><i class="bi bi-server me-2"></i>Trunk VLANs to Server</h2>
-                        <p class="text-muted">Find a server in NetBox and trunk VLANs to the leaf port it is cabled to</p>
-                    </div>
-
-                    <div class="row">
-                        <div class="col-lg-8 mx-auto">
-                            <form id="serverTrunkForm">
-                                <div class="card shadow-sm mb-4">
-                                    <div class="card-header bg-primary text-white">
-                                        <h5 class="mb-0"><i class="bi bi-server me-2"></i>Server Connection</h5>
-                                    </div>
-                                    <div class="card-body">
-                                        <!-- Row / Rack filters -->
-                                        <div class="row g-3 mb-3">
-                                            <div class="col-md-6">
-                                                <label for="serverTrunkRow" class="form-label fw-bold">
-                                                    <i class="bi bi-grid-3x3 text-primary me-2"></i>Row
-                                                </label>
-                                                <select class="form-select" id="serverTrunkRow">
-                                                    <option value="">All rows</option>
-                                                </select>
-                                            </div>
-                                            <div class="col-md-6">
-                                                <label for="serverTrunkRack" class="form-label fw-bold">
-                                                    <i class="bi bi-hdd-rack text-primary me-2"></i>Rack
-                                                </label>
-                                                <select class="form-select" id="serverTrunkRack">
-                                                    <option value="">All racks</option>
-                                                </select>
-                                            </div>
-                                        </div>
-
-                                        <!-- Server search -->
-                                        <div class="mb-4">
-                                            <label for="serverTrunkSearch" class="form-label fw-bold">
-                                                <i class="bi bi-search text-primary me-2"></i>Server <span class="text-danger">*</span>
-                                            </label>
-                                            <input type="search" class="form-control mb-2" id="serverTrunkSearch"
-                                                   placeholder="Filter by name or description (e.g. db, esx-10)" autocomplete="off">
-                                            <select class="form-select" id="serverTrunkServer" size="6" required>
-                                            </select>
-                                            <small class="form-text text-muted" id="serverTrunkServerHelp">Loading servers from NetBox...</small>
-                                        </div>
-
-                                        <!-- Server NIC -->
-                                        <div class="mb-4">
-                                            <label for="serverTrunkInterface" class="form-label fw-bold">
-                                                <i class="bi bi-ethernet text-primary me-2"></i>Server Interface <span class="text-danger">*</span>
-                                            </label>
-                                            <select class="form-select" id="serverTrunkInterface" required disabled>
-                                                <option value="">-- Select a Server first --</option>
-                                            </select>
-                                            <small class="form-text text-muted">The leaf switch and port are resolved from the NetBox cable on this interface</small>
-                                        </div>
-
-                                        <!-- Resolved leaf port -->
-                                        <div id="serverTrunkConnection" class="mb-4" style="display: none;"></div>
-
-                                        <!-- Existing bindings -->
-                                        <div id="serverTrunkExisting" style="display: none;"></div>
-
-                                        <!-- EPG / VLAN -->
-                                        <div class="mb-4">
-                                            <label for="serverTrunkEpg" class="form-label fw-bold">
-                                                <i class="bi bi-diagram-3 text-primary me-2"></i>EPG / VLAN <span class="text-danger">*</span>
-                                            </label>
-                                            <select class="form-select" id="serverTrunkEpg" required disabled>
-                                                <option value="">-- Select a Server Interface first --</option>
-                                            </select>
-                                            <small class="form-text text-muted">VLANs already trunked to this port are not listed</small>
-                                        </div>
-
-                                        <!-- Mode -->
-                                        <div class="mb-4">
-                                            <label for="serverTrunkMode" class="form-label fw-bold">
-                                                <i class="bi bi-sliders text-primary me-2"></i>Mode <span class="text-danger">*</span>
-                                            </label>
-                                            <select class="form-select" id="serverTrunkMode" required disabled>
-                                                <option value="regular" selected>Regular (Tagged/Trunk)</option>
-                                                <option value="native">Native (Untagged VLAN)</option>
-                                                <option value="untagged">Untagged (Access)</option>
-                                            </select>
-                                            <small class="form-text text-muted">Select the VLAN tagging mode for this port binding</small>
-                                        </div>
-                                    </div>
-                                </div>
-
-                                <!-- Response Area -->
-                                <div id="serverTrunkResponse" class="alert" style="display: none;" role="alert"></div>
-
-                                <!-- Form Actions -->
-                                <div class="d-flex justify-content-end gap-2">
-                                    <button type="button" class="btn btn-outline-secondary" id="resetServerTrunkBtn">
-                                        <i class="bi bi-x-circle me-1"></i>Reset
-                                    </button>
-                                    <button type="submit" class="btn btn-primary" id="submitServerTrunkBtn" disabled>
-                                        <i class="bi bi-ethernet me-1"></i>Trunk VLAN to Server
-                                    </button>
-                                </div>
-                            </form>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Move Server Page -->
-                <div id="page-move-server" class="page-content">
-                    <div class="page-header mb-4">
-                        <h2><i class="bi bi-arrow-left-right me-2"></i>Move Server</h2>
-                        <p class="text-muted">Move a server's network profile to the leaf ports it has been re-cabled to</p>
+                        <h2><i class="bi bi-server me-2"></i>Server Connections</h2>
+                        <p class="text-muted">Change, copy or move the network configuration that follows a server, using its cabling in NetBox</p>
                     </div>
 
                     <div class="row">
                         <div class="col-lg-9 mx-auto">
-                            <form id="moveServerForm">
-                                <!-- Step 1: server -->
+                            <!-- Action chooser -->
+                            <div class="row g-3 mb-4" id="scActions" role="radiogroup" aria-label="What do you want to do?">
+                                <div class="col-md-4">
+                                    <button type="button" class="sc-action w-100 h-100 text-start" data-action="modify" role="radio" aria-checked="false">
+                                        <i class="bi bi-sliders sc-action-icon"></i>
+                                        <span class="sc-action-title">Modify a server</span>
+                                        <span class="sc-action-text">Add or remove VLANs on the ports an existing server is connected to</span>
+                                    </button>
+                                </div>
+                                <div class="col-md-4">
+                                    <button type="button" class="sc-action w-100 h-100 text-start" data-action="copy" role="radio" aria-checked="false">
+                                        <i class="bi bi-files sc-action-icon"></i>
+                                        <span class="sc-action-title">Copy a server</span>
+                                        <span class="sc-action-text">Give another server the same VLANs as one that is already set up</span>
+                                    </button>
+                                </div>
+                                <div class="col-md-4">
+                                    <button type="button" class="sc-action w-100 h-100 text-start" data-action="move" role="radio" aria-checked="false">
+                                        <i class="bi bi-arrow-left-right sc-action-icon"></i>
+                                        <span class="sc-action-title">Move a server</span>
+                                        <span class="sc-action-text">Follow a server to a new rack and the leaf ports it was re-cabled to</span>
+                                    </button>
+                                </div>
+                            </div>
+
+                            <form id="serverConnectionsForm" style="display: none;">
+                                <!-- Step 1: server (the source server, for copy) -->
                                 <div class="card shadow-sm mb-4">
                                     <div class="card-header bg-primary text-white">
-                                        <h5 class="mb-0"><i class="bi bi-1-circle me-2"></i>Server</h5>
+                                        <h5 class="mb-0"><i class="bi bi-1-circle me-2"></i><span id="scServerHeading">Server</span></h5>
                                     </div>
                                     <div class="card-body">
-                                        <input type="search" class="form-control mb-2" id="moveServerSearch"
-                                               placeholder="Filter by name, description, row or rack" autocomplete="off">
-                                        <select class="form-select" id="moveServerServer" size="6" required></select>
-                                        <small class="form-text text-muted" id="moveServerServerHelp">Loading servers from NetBox...</small>
-                                        <div id="moveServerProfile" class="mt-3" style="display: none;"></div>
+                                        <div class="row g-2 mb-2">
+                                            <div class="col-md-4">
+                                                <select class="form-select form-select-sm" id="scRow" aria-label="Row"><option value="">All rows</option></select>
+                                            </div>
+                                            <div class="col-md-4">
+                                                <select class="form-select form-select-sm" id="scRack" aria-label="Rack"><option value="">All racks</option></select>
+                                            </div>
+                                            <div class="col-md-4">
+                                                <input type="search" class="form-control form-control-sm" id="scSearch" placeholder="Search name or role" autocomplete="off">
+                                            </div>
+                                        </div>
+                                        <select class="form-select" id="scServer" size="6" aria-label="Server"></select>
+                                        <small class="form-text text-muted" id="scServerHelp">Loading servers from NetBox...</small>
+                                        <div id="scProfile" class="mt-3" style="display: none;"></div>
                                     </div>
                                 </div>
 
-                                <!-- Step 2: destination -->
-                                <div class="card shadow-sm mb-4">
+                                <!-- Step 2 (modify): per-interface VLAN editor -->
+                                <div class="card shadow-sm mb-4 sc-step" data-for="modify">
+                                    <div class="card-header bg-primary text-white">
+                                        <h5 class="mb-0"><i class="bi bi-2-circle me-2"></i>VLAN Changes</h5>
+                                    </div>
+                                    <div class="card-body">
+                                        <div id="scModifyEditor"><p class="text-muted mb-0">Select a server first.</p></div>
+                                    </div>
+                                </div>
+
+                                <!-- Step 2 (copy): target server -->
+                                <div class="card shadow-sm mb-4 sc-step" data-for="copy">
+                                    <div class="card-header bg-primary text-white">
+                                        <h5 class="mb-0"><i class="bi bi-2-circle me-2"></i>Copy To</h5>
+                                    </div>
+                                    <div class="card-body">
+                                        <input type="search" class="form-control form-control-sm mb-2" id="scTargetSearch" placeholder="Search name, role, row or rack" autocomplete="off">
+                                        <select class="form-select" id="scTarget" size="6" aria-label="Target server" disabled></select>
+                                        <small class="form-text text-muted">The target keeps its own cabling. Each of its interfaces gets the VLANs of the source interface you map it to.</small>
+                                        <div id="scCopyMappings" class="mt-3"></div>
+                                    </div>
+                                </div>
+
+                                <!-- Step 2 (move): destination -->
+                                <div class="card shadow-sm mb-4 sc-step" data-for="move">
                                     <div class="card-header bg-primary text-white">
                                         <h5 class="mb-0"><i class="bi bi-2-circle me-2"></i>New Location</h5>
                                     </div>
                                     <div class="card-body">
                                         <div class="mb-3">
-                                            <label for="moveServerRack" class="form-label fw-bold">
+                                            <label for="scMoveRack" class="form-label fw-bold">
                                                 <i class="bi bi-hdd-rack text-primary me-2"></i>Destination Rack <span class="text-danger">*</span>
                                             </label>
-                                            <select class="form-select" id="moveServerRack" required disabled>
+                                            <select class="form-select" id="scMoveRack" disabled>
                                                 <option value="">-- Select a Server first --</option>
                                             </select>
                                             <small class="form-text text-muted">Where the server now sits. Leafs in this row are listed first, but any leaf can be used.</small>
                                         </div>
-                                        <div id="moveServerMappings"></div>
+                                        <div id="scMoveMappings"></div>
                                         <div class="form-check mt-3">
-                                            <input class="form-check-input" type="checkbox" id="moveServerRemoveSource" checked>
-                                            <label class="form-check-label" for="moveServerRemoveSource">
+                                            <input class="form-check-input" type="checkbox" id="scMoveRemoveSource" checked>
+                                            <label class="form-check-label" for="scMoveRemoveSource">
                                                 Remove the configuration from the old ports in the same change
                                             </label>
-                                            <small class="form-text text-muted d-block">Uncheck to copy the profile and keep the old ports, for example while both locations are in service.</small>
                                         </div>
                                     </div>
                                 </div>
 
-                                <div id="moveServerResponse" class="alert" style="display: none;" role="alert"></div>
+                                <div id="scResponse" class="alert" style="display: none;" role="alert"></div>
 
                                 <div class="d-flex justify-content-end gap-2">
-                                    <button type="button" class="btn btn-outline-secondary" id="resetMoveServerBtn">
-                                        <i class="bi bi-x-circle me-1"></i>Reset
+                                    <button type="button" class="btn btn-outline-secondary" id="scResetBtn">
+                                        <i class="bi bi-arrow-counterclockwise me-1"></i>Start Over
                                     </button>
-                                    <button type="submit" class="btn btn-primary" id="submitMoveServerBtn" disabled>
-                                        <i class="bi bi-arrow-left-right me-1"></i>Request Move
+                                    <button type="submit" class="btn btn-primary" id="scSubmitBtn" disabled>
+                                        <i class="bi bi-send me-1"></i><span id="scSubmitLabel">Submit</span>
                                     </button>
                                 </div>
                             </form>

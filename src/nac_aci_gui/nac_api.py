@@ -664,6 +664,100 @@ class NacApiClient:
                           'bindings': bindings[s]} for s, d in sources.items()],
         }
 
+    def plan_port_edits(self, edits: list) -> Dict[str, Any]:
+        """
+        Plan adding and removing VLAN bindings on one or more leaf ports
+
+        Like plan_port_moves, each EPG touched gets one ``replace`` of its whole
+        ``static_ports`` list so additions and removals land in a single change.
+
+        Args:
+            edits: List of {'port': {node_id, module, port},
+                            'add': [{tenant, application_profile, endpoint_group, vlan, mode}],
+                            'remove': [{tenant, application_profile, endpoint_group, vlan}]}
+
+        Returns:
+            Dict with 'changes' (batch operations), 'summary' (per port: added, removed)
+            and 'errors'. 'changes' is empty when errors exist.
+        """
+        data_model = self.read_data_model()
+        if not data_model:
+            return {'changes': [], 'summary': [], 'errors': ['Failed to read the data model']}
+
+        epgs = {(t, ap, epg['name']): epg for t, ap, epg in self._iter_epgs(data_model)}
+        lists = {}
+        errors = []
+        summary = [self._apply_port_edit(edit, epgs, lists, errors) for edit in edits]
+
+        if not any(s['added'] or s['removed'] for s in summary) and not errors:
+            errors.append('No changes were requested')
+
+        changes = [] if errors else [{
+            'type': 'replace',
+            'path': self._epg_path(*epg_key),
+            'data': static_ports,
+            'change_message': f"Update static ports in EPG {epg_key[2]}",
+        } for epg_key, static_ports in lists.items()]
+        return {'changes': changes, 'summary': summary, 'errors': errors}
+
+    @staticmethod
+    def _binding_key(b: Dict[str, Any]) -> tuple:
+        return (b['tenant'], b['application_profile'], b['endpoint_group'], int(b['vlan']))
+
+    @staticmethod
+    def _working_static_ports(epg_key: tuple, epgs: dict, lists: dict, errors: list) -> Optional[list]:
+        """Return (and lazily create) the working static_ports list for an EPG, or None if it doesn't exist."""
+        if epg_key not in lists:
+            if epg_key not in epgs:
+                errors.append(f"EPG {epg_key[2]} not found in tenant {epg_key[0]}")
+                return None
+            lists[epg_key] = list(epgs[epg_key].get('static_ports', []) or [])
+        return lists[epg_key]
+
+    def _apply_port_edit(self, edit: Dict[str, Any], epgs: dict, lists: dict, errors: list) -> Dict[str, Any]:
+        """
+        Apply one port's removals and additions to the working static_ports lists
+
+        ``lists`` maps (tenant, application profile, EPG) to that EPG's working list and
+        is filled lazily from ``epgs``. Problems are appended to ``errors``.
+        """
+        node, module, port = (int(edit['port']['node_id']), int(edit['port'].get('module', 1)),
+                              int(edit['port']['port']))
+        label = f"node {node} port {module}/{port}"
+        on_port = {self._binding_key(b) for b in (self.get_port_profile(node, module, port) or [])}
+        allowed = self.get_available_epgs_for_port(node, module, port) or {}
+        allowed_keys = {self._binding_key(e) for e in allowed.get('available', []) + allowed.get('existing', [])}
+
+        def working_list(epg_key):
+            return self._working_static_ports(epg_key, epgs, lists, errors)
+
+        def is_this_port(sp, vlan):
+            return (sp.get('node_id') == node and sp.get('module', 1) == module and sp.get('port') == port
+                    and sp.get('vlan') == vlan and not sp.get('channel'))
+
+        removed = []
+        for b in edit.get('remove', []):
+            key = self._binding_key(b)
+            if key not in on_port:
+                errors.append(f"VLAN {b['vlan']} ({b['endpoint_group']}) is not configured on {label}")
+            elif working_list(key[:3]) is not None:
+                lists[key[:3]] = [sp for sp in lists[key[:3]] if not is_this_port(sp, key[3])]
+                removed.append(b)
+
+        added = []
+        for b in edit.get('add', []):
+            key = self._binding_key(b)
+            if key in on_port:
+                errors.append(f"VLAN {b['vlan']} ({b['endpoint_group']}) is already configured on {label}")
+            elif key not in allowed_keys:
+                errors.append(f"EPG {b['endpoint_group']} (VLAN {b['vlan']}) is not allowed on {label}")
+            elif working_list(key[:3]) is not None:
+                lists[key[:3]].append({'node_id': node, 'module': module, 'port': port,
+                                       'vlan': key[3], 'mode': b.get('mode', 'regular')})
+                added.append(b)
+
+        return {'port': {'node_id': node, 'module': module, 'port': port}, 'added': added, 'removed': removed}
+
     @staticmethod
     def _rewrite_static_ports(tenant, ap, epg, sources, destinations, remove_source, bindings, errors):
         """

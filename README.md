@@ -210,24 +210,6 @@ docker compose up -d --build                  # portal on :9999, nac-api on :800
 - Proxy settings are passed as build args from `HTTP_PROXY`, `HTTPS_PROXY` and `NO_PROXY`.
 - Put environment-specific settings, such as `extra_hosts` or runtime proxy variables, in `docker-compose.override.yml`. Compose loads it automatically, and it is gitignored.
 
-## Move Server
-
-**Actions → Move Server** handles a server being physically moved to another rack and re-cabled. The server team plugs into any free ports; the portal moves the server's network profile to follow it.
-
-1. Pick the server. The portal shows its **profile**: each NIC, the leaf port it is cabled to in NetBox, and every VLAN/EPG bound to that port.
-2. Pick the destination rack. Leafs in that row are listed first, but any leaf can be chosen (servers are not always cabled to the leafs in their own row).
-3. For each NIC, pick the leaf and the free port it was plugged into. Free means uncabled in NetBox and defined in the data model.
-4. Submit. The portal:
-   - opens **one pull request** that adds the bindings on the new ports and removes them from the old ones, so the old ports can't be left with stale config;
-   - records the new rack and cabling in NetBox (the cabling source of truth);
-   - emails a change request.
-
-Clearing **Remove the configuration from the old ports** copies the profile instead and keeps the old ports.
-
-The pull request is refused if a destination port already has bindings, if two NICs are mapped to the same port, or if an EPG on the server is not allowed on the destination port (its AAEP does not carry that EPG). NICs without VLANs are re-cabled in NetBox and need no data model change.
-
-Each affected EPG's `static_ports` list is rewritten with a single `replace`. nac-api selects list items only by index or by one `name=value` key, and static ports have no name, so deleting by index would shift the positions of later entries in the same change.
-
 ## Change Request Emails
 
 Every action that opens a pull request also emails a change request mailing list. The intent is for an ITSM intake, such as a ServiceNow inbound email action, to raise a change request from it. Each email has a subject like `[Network Change Request] Add VLAN 31 (Monitoring-EPG) to server niaid-hpc-41 eth0 via node 106 port 1/1`. It is sent as plain text plus HTML, and both parts carry the change details and a link to the pull request.
@@ -246,20 +228,30 @@ All settings are environment variables, kept in `.env`, so no credentials live i
 - If sending fails, the pull request is kept and the success message warns that no change request was raised.
 - Wrap values containing `$` in single quotes in `.env`, so Compose does not treat them as variables.
 
-## Trunk VLANs to Server
+## Server Connections
 
-**Actions → Trunk VLANs to Server** works alongside **Add VLAN to Port**. Instead of choosing a leaf and port, the user finds their server in NetBox:
+**Actions → Server Connections** brings together the three changes server teams ask for. The page opens with only three buttons; choosing one shows the form for that action. Every action starts from a server in NetBox and its **profile**: each interface, the leaf port it is cabled to, and the VLANs/EPGs bound to that port.
 
-1. Filter servers by row and rack (NetBox locations and racks), or search by name or description.
-2. Pick one of the server's interfaces. The portal follows the NetBox cable on that interface to the leaf switch and port.
-3. Pick an EPG/VLAN. As in Add VLAN to Port, VLANs already trunked on that port are listed separately and left out of the dropdown.
-4. Submit. The portal opens a pull request that adds the static port binding, with the server and its location in the PR description.
+| Action | What it does | Pull request |
+|---|---|---|
+| **Modify a server** | Tick VLANs to remove and pick VLANs to add, on any of the server's ports | Adds and removes bindings in one change |
+| **Copy a server** | Give another server the same VLANs, mapping source interfaces to target interfaces (`eth0` → `eth0` by default). The target keeps its own cabling | Adds the VLANs the target's ports don't already have; source ports are unchanged |
+| **Move a server** | Pick the new rack and, for each interface, the free leaf port it was plugged into. Leafs in that row are listed first, but any leaf can be used | Adds the bindings on the new ports and removes them from the old ones (or keeps them, to copy). NetBox is updated with the new rack and cabling |
 
-For this to work, NetBox needs:
+Every action opens a single pull request and emails a change request. The portal refuses a change when:
 
-- Servers with the `server` device role, placed in racks in a location (row)
-- Leaf switches with an integer `aci_node_id` custom field that matches the node ID in the data model
-- Cables from server interfaces to leaf interfaces named `Ethernet<module>/<port>`
+- a VLAN is already on the port, or the EPG is not allowed on it (the port's AAEP doesn't carry it)
+- for a move, a destination port already has bindings, or two interfaces map to the same port
+
+Interfaces without VLANs are re-cabled in NetBox during a move but need no data model change.
+
+For NetBox, the portal needs:
+
+- servers with the `server` device role, placed in racks in a location (row)
+- leaf switches with an integer `aci_node_id` custom field that matches the node ID in the data model
+- cables from server interfaces to leaf interfaces named `Ethernet<module>/<port>`
+
+Each affected EPG's `static_ports` list is rewritten with a single `replace`. nac-api selects list items only by index or by one `name=value` key, and static ports have no name, so deleting by index would shift the positions of later entries in the same change.
 
 `scripts/seed_netbox_dcim.py` seeds a demo layout: three rows, twelve racks, six leaf switches (nodes 101–106) and 48 dual-homed servers. It is idempotent, so you can re-run it safely:
 

@@ -995,21 +995,121 @@ input[data-has-value="true"]:focus {
     color: #ffda6a;
 }
 
-/* Move Server */
-.move-mapping {
+/* Server Connections: action chooser */
+.sc-action {
+    background-color: var(--card-bg, #fff);
+    border: 2px solid var(--border-color);
+    border-radius: 0.75rem;
+    color: var(--text-primary);
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+    padding: 1.25rem;
+    transition: border-color 0.15s ease, box-shadow 0.15s ease, transform 0.15s ease;
+}
+
+.sc-action:hover,
+.sc-action:focus-visible {
+    border-color: var(--bs-primary, #0d6efd);
+    box-shadow: 0 0.25rem 0.75rem rgba(13, 110, 253, 0.15);
+    outline: none;
+    transform: translateY(-1px);
+}
+
+.sc-action.active {
+    background-color: rgba(13, 110, 253, 0.08);
+    border-color: var(--bs-primary, #0d6efd);
+    box-shadow: 0 0 0 0.2rem rgba(13, 110, 253, 0.2);
+}
+
+.sc-action-icon {
+    color: var(--bs-primary, #0d6efd);
+    font-size: 1.75rem;
+}
+
+.sc-action-title {
+    font-size: 1.05rem;
+    font-weight: 600;
+}
+
+.sc-action-text {
+    color: #495057;
+    font-size: 0.875rem;
+    line-height: 1.4;
+}
+
+[data-theme="dark"] .sc-action-text {
+    color: var(--text-secondary);
+}
+
+[data-theme="dark"] .sc-action.active {
+    background-color: rgba(110, 168, 254, 0.12);
+}
+
+[data-theme="dark"] .sc-action-icon {
+    color: #8ab4ff;
+}
+
+/* Server Connections: per-port panels, chips and profile table */
+.sc-port {
     background-color: var(--bg-secondary);
     border-color: var(--border-color) !important;
 }
 
-.move-profile-label {
+.sc-label {
     color: var(--text-secondary);
+    font-weight: 600;
 }
 
-[data-theme="dark"] .move-mapping {
+.sc-chip {
+    align-items: center;
+    background-color: var(--bg-primary);
+    border: 1px solid var(--border-color);
+    border-radius: 1rem;
+    display: inline-flex;
+    font-size: 0.8125rem;
+    margin: 0 0.35rem 0.35rem 0;
+    padding: 0.2rem 0.6rem;
+}
+
+.sc-chip:has(.sc-remove:checked) {
+    background-color: #f8d7da;
+    border-color: #f1aeb5;
+    color: #58151c;
+    text-decoration: line-through;
+}
+
+.sc-chip-add {
+    background-color: #d1e7dd;
+    border-color: #a3cfbb;
+    color: #0a3622;
+}
+
+[data-theme="dark"] .sc-port {
     background-color: var(--bg-tertiary);
 }
 
-[data-theme="dark"] #moveServerProfile .table {
+[data-theme="dark"] .sc-chip {
+    background-color: var(--bg-secondary);
+}
+
+[data-theme="dark"] .sc-chip:has(.sc-remove:checked) {
+    background-color: #3a1d21;
+    border-color: #842029;
+    color: #ffb3b8;
+}
+
+[data-theme="dark"] .sc-chip-add {
+    background-color: #13301f;
+    border-color: #2f6b4a;
+    color: #8fe0b3;
+}
+
+[data-theme="dark"] .sc-chip-add .btn-close {
+    filter: invert(1);
+}
+
+[data-theme="dark"] .sc-table {
     --bs-table-bg: transparent;
     --bs-table-color: var(--text-primary);
     border-color: var(--border-color);

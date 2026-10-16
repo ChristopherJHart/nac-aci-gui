@@ -1671,3 +1671,127 @@ def move_server():
     except Exception as e:
         logger.error(f"Error in move-server endpoint: {str(e)}", exc_info=True)
         return jsonify({'status': 'error', 'message': f'Failed to move server: {str(e)}'}), 500
+
+
+def _binding_label(b: dict) -> str:
+    mode = b.get('mode', 'regular')
+    return f"VLAN {b['vlan']} ({b['endpoint_group']}{', ' + mode if mode != 'regular' else ''})"
+
+
+def _submit_port_edits(client, edits: list, action: str, title: str, body_intro: str, details: list):
+    """Plan port edits, open one pull request, and email a change request; returns a Flask response."""
+    plan = client.plan_port_edits(edits)
+    if plan['errors']:
+        return jsonify({'status': 'error', 'message': 'The change cannot go ahead', 'errors': plan['errors']}), 400
+
+    interface_by_port = {(int(e['port']['node_id']), int(e['port'].get('module', 1)), int(e['port']['port'])):
+                         e.get('interface') or 'NIC' for e in edits}
+    rows = []
+    for s in plan['summary']:
+        p = s['port']
+        if not (s['added'] or s['removed']):
+            continue
+        nic = interface_by_port.get((p['node_id'], p['module'], p['port']), 'NIC')
+        added = ', '.join(_binding_label(b) for b in s['added']) or '—'
+        removed = ', '.join(_binding_label(b) for b in s['removed']) or '—'
+        rows.append(f"| {nic} | node {p['node_id']} {p['module']}/{p['port']} | {added} | {removed} |")
+        if s['added']:
+            details.append((f"{nic} add", f"node {p['node_id']} {p['module']}/{p['port']}: {added}"))
+        if s['removed']:
+            details.append((f"{nic} remove", f"node {p['node_id']} {p['module']}/{p['port']}: {removed}"))
+
+    body = (body_intro + "\n\n| Interface | Leaf port | Add | Remove |\n|---|---|---|---|\n" + '\n'.join(rows) +
+            "\n\nLeaf ports resolved from NetBox cabling. Submitted via NAC ACI GUI.")
+    response = client.batch_operation(plan['changes'], apply=False, apply_title=title, apply_message=body)
+    if not response:
+        return jsonify({'status': 'error', 'message': 'Failed to create the change in NaC API'}), 500
+
+    pull_request_url, change_request = _notify_change(client, response, action, title, details)
+    return jsonify({
+        'status': 'success',
+        'message': title,
+        'pull_request_url': pull_request_url,
+        'change_request': change_request,
+        'data': {'summary': plan['summary'], 'nac_response': response},
+    })
+
+
+@nac_bp.route('/server-modify', methods=['POST'])
+def modify_server():
+    """
+    Add and remove VLANs on a server's leaf ports in one pull request
+
+    Request body:
+        server: {id, name, location}
+        edits: [{interface, port: {node_id, module, port},
+                 add: [{tenant, application_profile, endpoint_group, vlan, mode}],
+                 remove: [{tenant, application_profile, endpoint_group, vlan}]}]
+    """
+    try:
+        data = request.get_json() or {}
+        server = data.get('server') or {}
+        edits = [e for e in (data.get('edits') or []) if e.get('add') or e.get('remove')]
+        if not server.get('name') or not edits:
+            return jsonify({'status': 'error', 'message': 'server and at least one VLAN change are required'}), 400
+
+        n_add = sum(len(e.get('add', [])) for e in edits)
+        n_remove = sum(len(e.get('remove', [])) for e in edits)
+        parts = [f"add {n_add} VLAN{'s' if n_add != 1 else ''}" if n_add else '',
+                 f"remove {n_remove} VLAN{'s' if n_remove != 1 else ''}" if n_remove else '']
+        title = f"Modify server {server['name']}: {' and '.join(p for p in parts if p)}"
+        intro = (f"## Server Port Configuration Change\n\n- **Server**: {server['name']}\n"
+                 f"- **Location**: {server.get('location') or 'N/A'}")
+        return _submit_port_edits(get_nac_client(), edits, 'Modify Server Connections', title, intro,
+                                  [('Server', server['name']), ('Location', server.get('location') or 'N/A')])
+    except Exception as e:
+        logger.error(f"Error in server-modify endpoint: {str(e)}", exc_info=True)
+        return jsonify({'status': 'error', 'message': f'Failed to modify server: {str(e)}'}), 500
+
+
+@nac_bp.route('/server-copy', methods=['POST'])
+def copy_server():
+    """
+    Copy a server's port configuration onto another server's leaf ports
+
+    The target server keeps its own cabling (from NetBox); each mapped target port gets
+    the VLANs of its source port that it doesn't already have.
+
+    Request body:
+        source: {id, name, location}
+        target: {id, name, location}
+        mappings: [{source_interface, source_port: {node_id, module, port},
+                    target_interface, target_port: {node_id, module, port}}]
+    """
+    try:
+        data = request.get_json() or {}
+        source, target = data.get('source') or {}, data.get('target') or {}
+        mappings = data.get('mappings') or []
+        if not source.get('name') or not target.get('name') or not mappings:
+            return jsonify({'status': 'error', 'message': 'source, target and at least one mapping are required'}), 400
+        if source.get('id') == target.get('id'):
+            return jsonify({'status': 'error', 'message': 'Pick two different servers'}), 400
+
+        client = get_nac_client()
+        edits = []
+        for m in mappings:
+            sp, tp = m['source_port'], m['target_port']
+            existing = {(b['tenant'], b['application_profile'], b['endpoint_group'], b['vlan'])
+                        for b in (client.get_port_profile(tp['node_id'], tp.get('module', 1), tp['port']) or [])}
+            add = [b for b in (client.get_port_profile(sp['node_id'], sp.get('module', 1), sp['port']) or [])
+                   if (b['tenant'], b['application_profile'], b['endpoint_group'], b['vlan']) not in existing]
+            if add:
+                edits.append({'interface': m.get('target_interface'), 'port': tp, 'add': add, 'remove': []})
+        if not edits:
+            return jsonify({'status': 'error', 'message': 'The target server already has all of these VLANs',
+                            'errors': [f"{target['name']} already matches {source['name']} on the mapped interfaces"]}), 400
+
+        title = f"Copy server profile from {source['name']} to {target['name']}"
+        intro = (f"## Server Profile Copy\n\n- **From**: {source['name']} ({source.get('location') or 'N/A'})\n"
+                 f"- **To**: {target['name']} ({target.get('location') or 'N/A'})\n"
+                 f"- **Source ports**: unchanged")
+        return _submit_port_edits(client, edits, 'Copy Server Profile', title, intro,
+                                  [('From Server', f"{source['name']} ({source.get('location') or 'N/A'})"),
+                                   ('To Server', f"{target['name']} ({target.get('location') or 'N/A'})")])
+    except Exception as e:
+        logger.error(f"Error in server-copy endpoint: {str(e)}", exc_info=True)
+        return jsonify({'status': 'error', 'message': f'Failed to copy server profile: {str(e)}'}), 500
