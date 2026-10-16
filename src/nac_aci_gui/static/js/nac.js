@@ -2512,6 +2512,7 @@ function initializeServerConnections() {
     const serverSelect = $('scServer'), serverHelp = $('scServerHelp'), profileDiv = $('scProfile');
     const modifyEditor = $('scModifyEditor');
     const targetSearch = $('scTargetSearch'), targetSelect = $('scTarget'), copyMappings = $('scCopyMappings');
+    const targetHelp = $('scTargetHelp');
     const moveRack = $('scMoveRack'), moveMappings = $('scMoveMappings'), moveRemoveSource = $('scMoveRemoveSource');
     const submitBtn = $('scSubmitBtn'), submitLabel = $('scSubmitLabel'), resetBtn = $('scResetBtn');
     const responseDiv = $('scResponse');
@@ -2524,7 +2525,9 @@ function initializeServerConnections() {
 
     let action = null;
     let servers = [], racks = [], targets = [];
-    let movable = null;  // IDs of servers with VLANs to move; loaded when Move is chosen
+    // Server IDs by configuration state, from /server-config-status; null until loaded
+    let movable = null;      // VLANs on their cabled ports: can be moved
+    let copyTargets = null;  // cabled but nothing configured: valid copy destinations
     let profile = [], targetProfile = [];
     let available = {};  // interface_id -> EPGs that can be added to that port
 
@@ -2567,7 +2570,7 @@ function initializeServerConnections() {
         submitLabel.textContent = ACTIONS[action].submit;
         responseDiv.style.display = 'none';
         renderServers();
-        if (action === 'move') loadMovable();
+        if (action === 'move' || action === 'copy') loadConfigStatus();
         // Keep the chosen server when switching actions; rebuild the action-specific step
         if (selectedServer()) onServerChosen(); else resetSteps();
     }
@@ -2625,17 +2628,23 @@ function initializeServerConnections() {
         }
     }
 
-    async function loadMovable() {
+    async function loadConfigStatus() {
         movable = null;
+        copyTargets = null;
         renderServers();
+        renderTargets();
         try {
-            const result = await fetch('/api/v1/nac/movable-servers').then(r => r.json());
-            movable = new Set(result.status === 'success' ? result.data : []);
+            const result = await fetch('/api/v1/nac/server-config-status').then(r => r.json());
+            const data = result.status === 'success' ? result.data : { configured: [], unconfigured: [] };
+            movable = new Set(data.configured);
+            copyTargets = new Set(data.unconfigured);
         } catch (error) {
-            console.error('Error loading movable servers:', error);
+            console.error('Error loading server configuration status:', error);
             movable = new Set();
+            copyTargets = new Set();
         }
-        if (action === 'move') renderServers();
+        renderServers();
+        renderTargets();
     }
 
     rowSelect.addEventListener('change', () => { rackSelect.value = ''; renderServers(); });
@@ -2662,7 +2671,7 @@ function initializeServerConnections() {
 
     function resetSteps() {
         modifyEditor.innerHTML = '<p class="text-muted mb-0">Select a server first.</p>';
-        targetSelect.innerHTML = ''; targetSelect.disabled = true; copyMappings.innerHTML = '';
+        targetSelect.innerHTML = ''; targetSelect.disabled = true; copyMappings.innerHTML = ''; targetHelp.textContent = '';
         moveRack.innerHTML = '<option value="">-- Select a Server first --</option>'; moveRack.disabled = true;
         moveMappings.innerHTML = '';
         submitBtn.disabled = true;
@@ -2774,9 +2783,17 @@ function initializeServerConnections() {
         renderTargets();
     }
 
+    // Only servers with nothing configured can receive a copy, so a copy never mixes with existing VLANs
     function renderTargets() {
+        if (action !== 'copy' || targetSelect.disabled) return;
         const server = selectedServer();
-        targetSelect.innerHTML = serverOptions(servers, targetSearch.value.trim().toLowerCase(), server && server.id);
+        const selected = targetSelect.value;
+        const pool = copyTargets ? servers.filter(s => copyTargets.has(s.id)) : [];
+        targetSelect.innerHTML = serverOptions(pool, targetSearch.value.trim().toLowerCase(), server && server.id);
+        if (Array.from(targetSelect.options).some(o => o.value === selected)) targetSelect.value = selected;
+        targetHelp.textContent = copyTargets === null ? 'Finding servers with no configuration...'
+            : targetSelect.options.length + ' of ' + pool.length + ' unconfigured servers shown \u2014 only servers with ' +
+              'no VLANs on their cabled ports can receive a copy';
     }
 
     targetSearch.addEventListener('input', renderTargets);
@@ -2941,8 +2958,8 @@ function initializeServerConnections() {
                         : '<div class="change-request-notice change-request-failed mt-2 small"><strong>NetBox was not updated:</strong> ' + escapeHtml(result.netbox_error) + '</div>')
                         : ' Changes show here once the pull request is merged.') +
                     changeRequestNotice(result.change_request);
-                if (action === 'move') { await loadReferenceData(); profileDiv.style.display = 'none'; resetSteps(); loadMovable(); }
-                else { onServerChosen(); }
+                if (action === 'move') { await loadReferenceData(); profileDiv.style.display = 'none'; resetSteps(); loadConfigStatus(); }
+                else { loadConfigStatus(); onServerChosen(); }
             } else {
                 responseDiv.className = 'alert alert-danger';
                 responseDiv.innerHTML = '<strong><i class="bi bi-exclamation-triangle me-1"></i>' + escapeHtml(result.message) + '</strong>' +

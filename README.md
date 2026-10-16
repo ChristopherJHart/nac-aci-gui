@@ -245,7 +245,10 @@ Every action opens a single pull request and emails a change request. The portal
 
 Interfaces without VLANs are re-cabled in NetBox during a move but need no data model change.
 
-**Move a server** lists only servers that can be moved: at least one interface must be cabled to a leaf port with VLAN bindings in the data model. To stage servers for testing moves, run:
+Both server lists are filtered by whether a server's NetBox-cabled leaf ports have VLAN bindings in the data model:
+
+- **Move a server** lists only servers that can be moved: at least one interface is cabled to a leaf port with bindings.
+- **Copy a server** offers, as destinations, only servers with nothing configured: cabled, but with no bindings on any of their ports. A copy therefore never mixes with VLANs the target already has. To stage servers for testing moves, run:
 
 ```bash
 docker compose exec nac-aci-gui .venv/bin/python scripts/stage_move_test_data.py --dry-run   # preview

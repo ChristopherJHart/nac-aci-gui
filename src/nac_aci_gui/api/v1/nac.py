@@ -1553,25 +1553,35 @@ def get_server_profile(server_id):
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
 
-@nac_bp.route('/movable-servers', methods=['GET'])
-def get_movable_servers():
+@nac_bp.route('/server-config-status', methods=['GET'])
+def get_server_config_status():
     """
-    Get the IDs of servers that can be moved
+    Classify servers by whether their cabled leaf ports have configuration
 
-    A server is movable when at least one of its interfaces is cabled (in NetBox) to a
-    leaf port that has VLAN bindings in the data model. Servers with nothing configured
-    have no profile to move.
+    - configured: at least one interface is cabled (in NetBox) to a leaf port with VLAN
+      bindings in the data model. These can be moved, or copied from.
+    - unconfigured: cabled to at least one leaf port, and none of those ports have
+      bindings. These are the only valid copy destinations.
+
+    Servers with no cabled interfaces are in neither list.
     """
     try:
         connections = get_netbox_client().get_all_server_connections()
         bound = get_nac_client().get_bound_ports()
         if connections is None or bound is None:
             return jsonify({'status': 'error', 'message': 'Failed to read NetBox or the data model'}), 500
-        movable = sorted(server_id for server_id, conns in connections.items()
-                         if any((c['node_id'], c['module'], c['port']) in bound for c in conns if c['node_id']))
-        return jsonify({'status': 'success', 'data': movable})
+
+        configured, unconfigured = [], []
+        for server_id, conns in connections.items():
+            ports = [(c['node_id'], c['module'], c['port']) for c in conns if c['node_id'] and c['port'] is not None]
+            if any(p in bound for p in ports):
+                configured.append(server_id)
+            elif ports:
+                unconfigured.append(server_id)
+        return jsonify({'status': 'success', 'data': {'configured': sorted(configured),
+                                                      'unconfigured': sorted(unconfigured)}})
     except Exception as e:
-        logger.error(f"Error in movable-servers endpoint: {str(e)}", exc_info=True)
+        logger.error(f"Error in server-config-status endpoint: {str(e)}", exc_info=True)
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
 
