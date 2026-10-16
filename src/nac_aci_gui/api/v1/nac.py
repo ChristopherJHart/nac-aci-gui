@@ -1529,3 +1529,145 @@ def add_static_port():
     except Exception as e:
         logger.error(f"Error in add-static-port endpoint: {str(e)}", exc_info=True)
         return jsonify({'status': 'error', 'message': f'Failed to add static port binding: {str(e)}'}), 500
+
+
+@nac_bp.route('/server-profile/<int:server_id>', methods=['GET'])
+def get_server_profile(server_id):
+    """
+    Get a server's profile: each NetBox interface, the leaf port it is cabled to,
+    and every static port binding on that leaf port
+    """
+    try:
+        connections = get_netbox_client().get_server_connections(server_id)
+        if connections is None:
+            return jsonify({'status': 'error', 'message': 'Failed to read server connections from NetBox'}), 500
+
+        client = get_nac_client()
+        for conn in connections:
+            conn['bindings'] = []
+            if conn.get('node_id') and conn.get('port') is not None:
+                conn['bindings'] = client.get_port_profile(conn['node_id'], conn['module'], conn['port']) or []
+        return jsonify({'status': 'success', 'data': connections})
+    except Exception as e:
+        logger.error(f"Error in server-profile endpoint: {str(e)}", exc_info=True)
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+
+@nac_bp.route('/move-targets', methods=['GET'])
+def get_move_targets():
+    """
+    Get leaf switches with their free (uncabled in NetBox) ports that are also
+    defined in the data model, i.e. ports a moved server can be plugged into
+    """
+    try:
+        netbox_client = get_netbox_client()
+        leafs = netbox_client.get_leaf_switches()
+        if leafs is None:
+            return jsonify({'status': 'error', 'message': 'Failed to read leaf switches from NetBox'}), 500
+
+        client = get_nac_client()
+        targets = []
+        for leaf in leafs:
+            if not leaf['node_id']:
+                continue
+            modeled = {(p['module'], p['port']) for p in (client.get_ports_for_leaf(leaf['node_id']) or [])}
+            free = [p for p in (netbox_client.get_free_leaf_ports(leaf['id']) or [])
+                    if (p['module'], p['port']) in modeled]
+            targets.append({**leaf, 'free_ports': free})
+        return jsonify({'status': 'success', 'data': targets})
+    except Exception as e:
+        logger.error(f"Error in move-targets endpoint: {str(e)}", exc_info=True)
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+
+@nac_bp.route('/move-server', methods=['POST'])
+def move_server():
+    """
+    Move (or copy) a server's profile to the leaf ports it has been re-cabled to
+
+    Request body:
+        server: {id, name, rack_id (optional)}
+        moves: [{server_interface_id, interface, source: {node_id, module, port},
+                 destination: {node_id, module, port, interface_id}}]
+        remove_source: bool (default true). False copies the profile and keeps the old ports.
+
+    The data model change is a single pull request that adds the bindings on the new
+    ports and, for a move, removes them from the old ones. NetBox is then updated to
+    the server's new rack and cabling, and a change request email is sent.
+    """
+    try:
+        data = request.get_json() or {}
+        server = data.get('server') or {}
+        moves = data.get('moves') or []
+        remove_source = bool(data.get('remove_source', True))
+        if not server.get('id') or not moves:
+            return jsonify({'status': 'error', 'message': 'server and at least one move are required'}), 400
+
+        # Interfaces without VLANs are re-cabled in NetBox but need no data model change
+        config_moves = [m for m in moves if m.get('has_bindings', True)]
+        if not config_moves:
+            return jsonify({'status': 'error', 'message': 'None of the server interfaces carry VLANs to move'}), 400
+
+        client = get_nac_client()
+        plan = client.plan_port_moves(config_moves, remove_source=remove_source)
+        if plan['errors']:
+            return jsonify({'status': 'error', 'message': 'The move cannot go ahead',
+                            'errors': plan['errors']}), 400
+
+        verb = 'Move' if remove_source else 'Copy'
+        interface_by_source = {(m['source']['node_id'], m['source'].get('module', 1), m['source']['port']):
+                               m.get('interface') for m in config_moves}
+        recabled_only = [m for m in moves if not m.get('has_bindings', True)]
+        lines, details = [], []
+        for item in plan['bindings']:
+            src, dst = item['source'], item['destination']
+            nic = interface_by_source.get((src['node_id'], src['module'], src['port'])) or 'NIC'
+            vlans = ', '.join(f"{b['vlan']} ({b['endpoint_group']}, {b['mode']})" for b in item['bindings'])
+            route = (f"node {src['node_id']} {src['module']}/{src['port']} → "
+                     f"node {dst['node_id']} {dst['module']}/{dst['port']}")
+            lines.append(f"| {nic} | {route} | {vlans} |")
+            details.append((f"{nic}", f"{route}: VLAN {vlans}"))
+
+        rack_label = server.get('new_rack') or 'same rack'
+        title = f"{verb} server {server.get('name', server['id'])} to {rack_label}"
+        body = (f"## Server {verb}\n\n"
+                f"- **Server**: {server.get('name', server['id'])}\n"
+                f"- **From**: {server.get('old_rack') or 'N/A'}\n"
+                f"- **To**: {rack_label}\n"
+                f"- **Old ports**: {'removed in this change' if remove_source else 'kept (copy)'}\n\n"
+                f"| Interface | Leaf ports | VLANs (EPG, mode) |\n|---|---|---|\n" + '\n'.join(lines) +
+                ''.join(f"\n| {m.get('interface') or 'NIC'} | node {m['source']['node_id']} "
+                        f"{m['source'].get('module', 1)}/{m['source']['port']} → node {m['destination']['node_id']} "
+                        f"{m['destination']['module']}/{m['destination']['port']} | none (re-cabled only) |"
+                        for m in recabled_only) +
+                "\n\nNew cabling recorded in NetBox. Submitted via NAC ACI GUI.")
+
+        response = client.batch_operation(plan['changes'], apply=False, apply_title=title, apply_message=body)
+        if not response:
+            return jsonify({'status': 'error', 'message': 'Failed to create the change in NaC API'}), 500
+
+        # NetBox is the source of truth for cabling, so record the move only once the change exists
+        netbox_error = get_netbox_client().move_server(
+            server['id'], server.get('rack_id'),
+            [{'server_interface_id': m['server_interface_id'],
+              'leaf_interface_id': m['destination']['interface_id']} for m in moves])
+
+        pull_request_url, change_request = _notify_change(
+            client, response, f'{verb} Server', title,
+            [('Server', server.get('name', server['id'])),
+             ('From', server.get('old_rack') or 'N/A'), ('To', rack_label),
+             ('Old Ports', 'Removed in this change' if remove_source else 'Kept (copy)'),
+             *details])
+
+        return jsonify({
+            'status': 'success',
+            'message': f"{verb} of {server.get('name', server['id'])} requested",
+            'pull_request_url': pull_request_url,
+            'change_request': change_request,
+            'netbox_updated': netbox_error is None,
+            'netbox_error': netbox_error,
+            'data': {'plan': plan['bindings'], 'nac_response': response},
+        })
+    except Exception as e:
+        logger.error(f"Error in move-server endpoint: {str(e)}", exc_info=True)
+        return jsonify({'status': 'error', 'message': f'Failed to move server: {str(e)}'}), 500

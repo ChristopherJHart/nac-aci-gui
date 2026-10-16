@@ -210,6 +210,24 @@ docker compose up -d --build                  # portal on :9999, nac-api on :800
 - Proxy settings are passed as build args from `HTTP_PROXY`, `HTTPS_PROXY` and `NO_PROXY`.
 - Put environment-specific settings, such as `extra_hosts` or runtime proxy variables, in `docker-compose.override.yml`. Compose loads it automatically, and it is gitignored.
 
+## Move Server
+
+**Actions → Move Server** handles a server being physically moved to another rack and re-cabled. The server team plugs into any free ports; the portal moves the server's network profile to follow it.
+
+1. Pick the server. The portal shows its **profile**: each NIC, the leaf port it is cabled to in NetBox, and every VLAN/EPG bound to that port.
+2. Pick the destination rack. Leafs in that row are listed first, but any leaf can be chosen (servers are not always cabled to the leafs in their own row).
+3. For each NIC, pick the leaf and the free port it was plugged into. Free means uncabled in NetBox and defined in the data model.
+4. Submit. The portal:
+   - opens **one pull request** that adds the bindings on the new ports and removes them from the old ones, so the old ports can't be left with stale config;
+   - records the new rack and cabling in NetBox (the cabling source of truth);
+   - emails a change request.
+
+Clearing **Remove the configuration from the old ports** copies the profile instead and keeps the old ports.
+
+The pull request is refused if a destination port already has bindings, if two NICs are mapped to the same port, or if an EPG on the server is not allowed on the destination port (its AAEP does not carry that EPG). NICs without VLANs are re-cabled in NetBox and need no data model change.
+
+Each affected EPG's `static_ports` list is rewritten with a single `replace`. nac-api selects list items only by index or by one `name=value` key, and static ports have no name, so deleting by index would shift the positions of later entries in the same change.
+
 ## Change Request Emails
 
 Every action that opens a pull request also emails a change request mailing list. The intent is for an ITSM intake, such as a ServiceNow inbound email action, to raise a change request from it. Each email has a subject like `[Network Change Request] Add VLAN 31 (Monitoring-EPG) to server niaid-hpc-41 eth0 via node 106 port 1/1`. It is sent as plain text plus HTML, and both parts carry the change details and a link to the pull request.

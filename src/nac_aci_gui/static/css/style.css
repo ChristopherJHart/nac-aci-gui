@@ -994,3 +994,23 @@ input[data-has-value="true"]:focus {
     border-color: #997404;
     color: #ffda6a;
 }
+
+/* Move Server */
+.move-mapping {
+    background-color: var(--bg-secondary);
+    border-color: var(--border-color) !important;
+}
+
+.move-profile-label {
+    color: var(--text-secondary);
+}
+
+[data-theme="dark"] .move-mapping {
+    background-color: var(--bg-tertiary);
+}
+
+[data-theme="dark"] #moveServerProfile .table {
+    --bs-table-bg: transparent;
+    --bs-table-color: var(--text-primary);
+    border-color: var(--border-color);
+}

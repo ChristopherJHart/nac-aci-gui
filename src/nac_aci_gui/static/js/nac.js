@@ -2800,3 +2800,323 @@ function showNacVrfYamlModal(vrfName, tableInstances) {
         alert('Error displaying YAML: ' + error.message);
     }
 }
+
+
+/**
+ * Initialize the Move Server form
+ *
+ * The user picks a server and its new rack, then, for each interface that carries
+ * VLANs, the free leaf port it was plugged into. Free ports come from NetBox (the
+ * cabling source of truth) and are limited to ports defined in the data model.
+ * Submitting opens one pull request that moves (or copies) every binding, records
+ * the new rack and cabling in NetBox, and emails a change request.
+ */
+function initializeMoveServerForm() {
+    const form = document.getElementById('moveServerForm');
+    if (!form) return;
+
+    const searchInput = document.getElementById('moveServerSearch');
+    const serverSelect = document.getElementById('moveServerServer');
+    const serverHelp = document.getElementById('moveServerServerHelp');
+    const profileDiv = document.getElementById('moveServerProfile');
+    const rackSelect = document.getElementById('moveServerRack');
+    const mappingsDiv = document.getElementById('moveServerMappings');
+    const removeSource = document.getElementById('moveServerRemoveSource');
+    const submitBtn = document.getElementById('submitMoveServerBtn');
+    const resetBtn = document.getElementById('resetMoveServerBtn');
+    const responseDiv = document.getElementById('moveServerResponse');
+
+    let servers = [];
+    let racks = [];
+    let targets = [];
+    let profile = [];
+
+    function escapeHtml(value) {
+        const div = document.createElement('div');
+        div.textContent = value == null ? '' : String(value);
+        return div.innerHTML;
+    }
+
+    // Every cabled interface moves with the server; only those with VLANs change the data model
+    function movable() {
+        return profile.filter(c => c.leaf);
+    }
+
+    function hasVlans() {
+        return profile.some(c => c.leaf && c.bindings && c.bindings.length > 0);
+    }
+
+    function renderServers() {
+        const query = searchInput.value.trim().toLowerCase();
+        const selected = serverSelect.value;
+        const matches = servers.filter(s => !query ||
+            [s.name, s.description, s.row, s.rack].join(' ').toLowerCase().includes(query));
+        serverSelect.innerHTML = '';
+        matches.forEach(function(s) {
+            const option = document.createElement('option');
+            option.value = s.id;
+            option.textContent = s.name + ' — ' + (s.description || 'Server') +
+                ' (' + (s.row || 'No row') + ', Rack ' + (s.rack || '?') + ')';
+            serverSelect.appendChild(option);
+        });
+        if (matches.some(s => String(s.id) === selected)) serverSelect.value = selected;
+        serverHelp.textContent = matches.length + ' of ' + servers.length + ' servers shown';
+    }
+
+    async function loadReferenceData() {
+        try {
+            const [serversRes, racksRes] = await Promise.all([
+                fetch('/api/v1/netbox/servers').then(r => r.json()),
+                fetch('/api/v1/netbox/racks').then(r => r.json())
+            ]);
+            servers = serversRes.status === 'success' ? serversRes.data : [];
+            racks = racksRes.status === 'success' ? racksRes.data : [];
+            renderServers();
+        } catch (error) {
+            console.error('Error loading servers/racks:', error);
+            serverHelp.textContent = 'Failed to load servers from NetBox';
+        }
+    }
+
+    function resetDestination() {
+        rackSelect.innerHTML = '<option value="">-- Select a Server first --</option>';
+        rackSelect.disabled = true;
+        mappingsDiv.innerHTML = '';
+        submitBtn.disabled = true;
+    }
+
+    function renderProfile(server) {
+        if (profile.length === 0) {
+            profileDiv.innerHTML = '<div class="alert alert-warning mb-0">This server has no interfaces in NetBox.</div>';
+            profileDiv.style.display = 'block';
+            return;
+        }
+        const rows = profile.map(function(c) {
+            const where = c.leaf ? escapeHtml(c.leaf) + ' ' + escapeHtml(c.leaf_interface) +
+                ' <span class="text-muted">(Node ' + escapeHtml(c.node_id) + ')</span>' : '<em>not cabled</em>';
+            const vlans = (c.bindings || []).length
+                ? c.bindings.map(b => '<span class="badge bg-primary me-1">VLAN ' + escapeHtml(b.vlan) + ' · ' +
+                      escapeHtml(b.endpoint_group) + (b.mode !== 'regular' ? ' · ' + escapeHtml(b.mode) : '') + '</span>').join('')
+                : '<span class="text-muted">no VLANs</span>';
+            return '<tr><td class="fw-semibold">' + escapeHtml(c.interface) + '</td><td>' + where + '</td><td>' + vlans + '</td></tr>';
+        }).join('');
+        profileDiv.innerHTML = '<div class="small fw-bold mb-2 move-profile-label"><i class="bi bi-person-badge me-1"></i>Current profile of ' +
+            escapeHtml(server.name) + ' (' + escapeHtml(server.row || 'No row') + ', Rack ' + escapeHtml(server.rack || '?') + ')</div>' +
+            '<div class="table-responsive"><table class="table table-sm align-middle mb-0">' +
+            '<thead><tr><th>Interface</th><th>Leaf port</th><th>VLANs</th></tr></thead><tbody>' + rows + '</tbody></table></div>' +
+            (!hasVlans() ? '<div class="alert alert-warning mt-2 mb-0">No VLANs are configured on this server’s ports, so there is nothing to move.</div>' : '');
+        profileDiv.style.display = 'block';
+    }
+
+    serverSelect.addEventListener('change', async function() {
+        resetDestination();
+        responseDiv.style.display = 'none';
+        const server = servers.find(s => String(s.id) === this.value);
+        if (!server) return;
+
+        profileDiv.innerHTML = '<div class="text-muted small"><span class="spinner-border spinner-border-sm me-1"></span>Loading profile...</div>';
+        profileDiv.style.display = 'block';
+        try {
+            const [profileRes, targetsRes] = await Promise.all([
+                fetch('/api/v1/nac/server-profile/' + server.id).then(r => r.json()),
+                fetch('/api/v1/nac/move-targets').then(r => r.json())
+            ]);
+            profile = profileRes.status === 'success' ? profileRes.data : [];
+            targets = targetsRes.status === 'success' ? targetsRes.data : [];
+            renderProfile(server);
+            if (!hasVlans()) return;
+
+            rackSelect.innerHTML = '<option value="">-- Select the destination rack --</option>';
+            racks.forEach(function(r) {
+                const option = document.createElement('option');
+                option.value = r.id;
+                option.textContent = (r.row || 'No row') + ' — Rack ' + r.name + (r.name === server.rack ? ' (current)' : '');
+                rackSelect.appendChild(option);
+            });
+            rackSelect.disabled = false;
+        } catch (error) {
+            console.error('Error loading server profile:', error);
+            profileDiv.innerHTML = '<div class="alert alert-danger mb-0">Failed to load the server profile.</div>';
+        }
+    });
+
+    function leafOptions(row) {
+        // Leafs in the destination row first: physical location ranks leafs, it doesn't filter them
+        const near = targets.filter(t => t.row === row);
+        const far = targets.filter(t => t.row !== row);
+        const group = function(label, list) {
+            if (list.length === 0) return '';
+            return '<optgroup label="' + escapeHtml(label) + '">' + list.map(function(t) {
+                const free = t.free_ports.length;
+                return '<option value="' + t.node_id + '"' + (free === 0 ? ' disabled' : '') + '>' + escapeHtml(t.name) +
+                    ' (Node ' + t.node_id + ', Rack ' + escapeHtml(t.rack || '?') + ') — ' + free + ' free</option>';
+            }).join('') + '</optgroup>';
+        };
+        return '<option value="">-- Select a leaf --</option>' + group('In ' + (row || 'this row'), near) + group('Other rows', far);
+    }
+
+    function renderMappings() {
+        const rack = racks.find(r => String(r.id) === rackSelect.value);
+        mappingsDiv.innerHTML = '';
+        if (!rack) { validate(); return; }
+
+        const intro = document.createElement('p');
+        intro.className = 'fw-bold mb-2';
+        intro.innerHTML = '<i class="bi bi-plug text-primary me-2"></i>New leaf port for each interface <span class="text-danger">*</span>';
+        mappingsDiv.appendChild(intro);
+
+        movable().forEach(function(conn, index) {
+            const row = document.createElement('div');
+            row.className = 'move-mapping border rounded p-3 mb-2';
+            row.dataset.index = index;
+            row.innerHTML =
+                '<div class="small mb-2"><strong>' + escapeHtml(conn.interface) + '</strong> — now on ' +
+                escapeHtml(conn.leaf) + ' ' + escapeHtml(conn.leaf_interface) + ' — ' +
+                (conn.bindings.length ? conn.bindings.map(b => 'VLAN ' + escapeHtml(b.vlan)).join(', ')
+                                      : '<span class="text-muted">no VLANs (re-cabled in NetBox only)</span>') + '</div>' +
+                '<div class="row g-2"><div class="col-md-7"><select class="form-select form-select-sm move-leaf">' +
+                leafOptions(rack.row) + '</select></div>' +
+                '<div class="col-md-5"><select class="form-select form-select-sm move-port" disabled>' +
+                '<option value="">-- Select a leaf first --</option></select></div></div>';
+            mappingsDiv.appendChild(row);
+        });
+        validate();
+    }
+
+    rackSelect.addEventListener('change', renderMappings);
+
+    mappingsDiv.addEventListener('change', function(event) {
+        const row = event.target.closest('.move-mapping');
+        if (!row) return;
+        if (event.target.classList.contains('move-leaf')) {
+            const portSelect = row.querySelector('.move-port');
+            const target = targets.find(t => String(t.node_id) === event.target.value);
+            portSelect.innerHTML = '<option value="">-- Select the port it is plugged into --</option>';
+            (target ? target.free_ports : []).forEach(function(p) {
+                const option = document.createElement('option');
+                option.value = p.interface_id;
+                option.dataset.module = p.module;
+                option.dataset.port = p.port;
+                option.textContent = p.name + ' (free)';
+                portSelect.appendChild(option);
+            });
+            portSelect.disabled = !target;
+        }
+        validate();
+    });
+
+    function collectMoves() {
+        return Array.from(mappingsDiv.querySelectorAll('.move-mapping')).map(function(row) {
+            const conn = movable()[row.dataset.index];
+            const leafSelect = row.querySelector('.move-leaf');
+            const portOption = row.querySelector('.move-port').selectedOptions[0];
+            if (!leafSelect.value || !portOption || !portOption.value) return null;
+            return {
+                server_interface_id: conn.interface_id,
+                interface: conn.interface,
+                has_bindings: conn.bindings.length > 0,
+                source: { node_id: conn.node_id, module: conn.module, port: conn.port },
+                destination: {
+                    node_id: parseInt(leafSelect.value),
+                    module: parseInt(portOption.dataset.module),
+                    port: parseInt(portOption.dataset.port),
+                    interface_id: parseInt(portOption.value)
+                }
+            };
+        });
+    }
+
+    function validate() {
+        const moves = collectMoves();
+        mappingsDiv.querySelectorAll('.move-port').forEach(s => s.classList.remove('is-invalid'));
+        let ok = moves.length > 0 && moves.every(Boolean);
+        // The same free port can't take two interfaces
+        const seen = {};
+        mappingsDiv.querySelectorAll('.move-mapping').forEach(function(row, i) {
+            const m = moves[i];
+            if (!m) return;
+            const key = m.destination.interface_id;
+            if (seen[key] !== undefined) {
+                row.querySelector('.move-port').classList.add('is-invalid');
+                ok = false;
+            }
+            seen[key] = i;
+        });
+        submitBtn.disabled = !ok;
+    }
+
+    form.addEventListener('submit', async function(event) {
+        event.preventDefault();
+        const server = servers.find(s => String(s.id) === serverSelect.value);
+        const rack = racks.find(r => String(r.id) === rackSelect.value);
+        const moves = collectMoves();
+        if (!server || !rack || !moves.every(Boolean)) return;
+
+        const originalText = submitBtn.innerHTML;
+        submitBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Submitting...';
+        submitBtn.disabled = true;
+        responseDiv.style.display = 'none';
+
+        try {
+            const response = await fetch('/api/v1/nac/move-server', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    server: {
+                        id: server.id, name: server.name, rack_id: rack.id,
+                        old_rack: (server.row || 'No row') + ', Rack ' + (server.rack || '?'),
+                        new_rack: (rack.row || 'No row') + ', Rack ' + rack.name
+                    },
+                    moves: moves,
+                    remove_source: removeSource.checked
+                })
+            });
+            const result = await response.json();
+
+            if (result.status === 'success') {
+                const verb = removeSource.checked ? 'Move' : 'Copy';
+                responseDiv.className = 'alert alert-success';
+                responseDiv.innerHTML = '<strong><i class="bi bi-check-circle me-1"></i>Success!</strong> ' + verb + ' of ' +
+                    escapeHtml(server.name) + ' to ' + escapeHtml(rack.row) + ', Rack ' + escapeHtml(rack.name) + ' requested. ' +
+                    pullRequestSentence(result.pull_request_url) +
+                    (result.netbox_updated
+                        ? '<div class="mt-2 small"><i class="bi bi-diagram-3 me-1"></i>NetBox updated with the new rack and cabling.</div>'
+                        : '<div class="change-request-notice change-request-failed mt-2 small"><strong>NetBox was not updated:</strong> ' +
+                          escapeHtml(result.netbox_error) + '</div>') +
+                    changeRequestNotice(result.change_request);
+                servers = [];
+                await loadReferenceData();
+                profileDiv.style.display = 'none';
+                resetDestination();
+            } else {
+                responseDiv.className = 'alert alert-danger';
+                responseDiv.innerHTML = '<strong><i class="bi bi-exclamation-triangle me-1"></i>' + escapeHtml(result.message) + '</strong>' +
+                    (result.errors ? '<ul class="mb-0 mt-2">' + result.errors.map(e => '<li>' + escapeHtml(e) + '</li>').join('') + '</ul>' : '');
+                submitBtn.disabled = false;
+            }
+        } catch (error) {
+            responseDiv.className = 'alert alert-danger';
+            responseDiv.innerHTML = '<strong><i class="bi bi-exclamation-triangle me-1"></i>Error:</strong> ' + escapeHtml(error.message);
+            submitBtn.disabled = false;
+        }
+
+        responseDiv.style.display = 'block';
+        submitBtn.innerHTML = originalText;
+        responseDiv.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    });
+
+    searchInput.addEventListener('input', renderServers);
+
+    resetBtn.addEventListener('click', function() {
+        form.reset();
+        profile = [];
+        profileDiv.style.display = 'none';
+        responseDiv.style.display = 'none';
+        resetDestination();
+        renderServers();
+    });
+
+    loadReferenceData();
+}
+
+document.addEventListener('DOMContentLoaded', initializeMoveServerForm);

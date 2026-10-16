@@ -102,6 +102,12 @@
                                 <span>Trunk VLANs to Server</span>
                             </a>
                         </li>
+                        <li class="sidebar-item">
+                            <a href="#" class="sidebar-link" data-page="move-server" data-parent="action">
+                                <i class="bi bi-arrow-left-right"></i>
+                                <span>Move Server</span>
+                            </a>
+                        </li>
                     </ul>
                 </li>
 
@@ -888,6 +894,71 @@
                                     </button>
                                     <button type="submit" class="btn btn-primary" id="submitServerTrunkBtn" disabled>
                                         <i class="bi bi-ethernet me-1"></i>Trunk VLAN to Server
+                                    </button>
+                                </div>
+                            </form>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Move Server Page -->
+                <div id="page-move-server" class="page-content">
+                    <div class="page-header mb-4">
+                        <h2><i class="bi bi-arrow-left-right me-2"></i>Move Server</h2>
+                        <p class="text-muted">Move a server's network profile to the leaf ports it has been re-cabled to</p>
+                    </div>
+
+                    <div class="row">
+                        <div class="col-lg-9 mx-auto">
+                            <form id="moveServerForm">
+                                <!-- Step 1: server -->
+                                <div class="card shadow-sm mb-4">
+                                    <div class="card-header bg-primary text-white">
+                                        <h5 class="mb-0"><i class="bi bi-1-circle me-2"></i>Server</h5>
+                                    </div>
+                                    <div class="card-body">
+                                        <input type="search" class="form-control mb-2" id="moveServerSearch"
+                                               placeholder="Filter by name, description, row or rack" autocomplete="off">
+                                        <select class="form-select" id="moveServerServer" size="6" required></select>
+                                        <small class="form-text text-muted" id="moveServerServerHelp">Loading servers from NetBox...</small>
+                                        <div id="moveServerProfile" class="mt-3" style="display: none;"></div>
+                                    </div>
+                                </div>
+
+                                <!-- Step 2: destination -->
+                                <div class="card shadow-sm mb-4">
+                                    <div class="card-header bg-primary text-white">
+                                        <h5 class="mb-0"><i class="bi bi-2-circle me-2"></i>New Location</h5>
+                                    </div>
+                                    <div class="card-body">
+                                        <div class="mb-3">
+                                            <label for="moveServerRack" class="form-label fw-bold">
+                                                <i class="bi bi-hdd-rack text-primary me-2"></i>Destination Rack <span class="text-danger">*</span>
+                                            </label>
+                                            <select class="form-select" id="moveServerRack" required disabled>
+                                                <option value="">-- Select a Server first --</option>
+                                            </select>
+                                            <small class="form-text text-muted">Where the server now sits. Leafs in this row are listed first, but any leaf can be used.</small>
+                                        </div>
+                                        <div id="moveServerMappings"></div>
+                                        <div class="form-check mt-3">
+                                            <input class="form-check-input" type="checkbox" id="moveServerRemoveSource" checked>
+                                            <label class="form-check-label" for="moveServerRemoveSource">
+                                                Remove the configuration from the old ports in the same change
+                                            </label>
+                                            <small class="form-text text-muted d-block">Uncheck to copy the profile and keep the old ports, for example while both locations are in service.</small>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div id="moveServerResponse" class="alert" style="display: none;" role="alert"></div>
+
+                                <div class="d-flex justify-content-end gap-2">
+                                    <button type="button" class="btn btn-outline-secondary" id="resetMoveServerBtn">
+                                        <i class="bi bi-x-circle me-1"></i>Reset
+                                    </button>
+                                    <button type="submit" class="btn btn-primary" id="submitMoveServerBtn" disabled>
+                                        <i class="bi bi-arrow-left-right me-1"></i>Request Move
                                     </button>
                                 </div>
                             </form>

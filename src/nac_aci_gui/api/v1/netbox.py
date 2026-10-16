@@ -497,6 +497,33 @@ def get_servers():
         return jsonify({'status': 'error', 'message': f'Failed to retrieve servers: {str(e)}'}), 500
 
 
+@netbox_bp.route('/racks', methods=['GET'])
+def get_racks():
+    """
+    Get racks from NetBox with their row (location)
+    ---
+    tags:
+      - NetBox
+    summary: Get racks
+    responses:
+      200:
+        description: List of racks
+      500:
+        description: Failed to retrieve racks
+    """
+    try:
+        client = get_netbox_client()
+        result = client.get('/api/dcim/racks/', params={'limit': 1000, 'ordering': 'name'})
+        if result is None:
+            return jsonify({'status': 'error', 'message': 'Failed to retrieve racks from NetBox'}), 500
+        racks = [{'id': r['id'], 'name': r['name'], 'row': (r.get('location') or {}).get('name')}
+                 for r in result.get('results', [])]
+        return jsonify({'status': 'success', 'data': racks})
+    except Exception as e:
+        logger.error(f"Error getting racks: {str(e)}", exc_info=True)
+        return jsonify({'status': 'error', 'message': f'Failed to retrieve racks: {str(e)}'}), 500
+
+
 @netbox_bp.route('/servers/<int:device_id>/connections', methods=['GET'])
 def get_server_connections(device_id):
     """

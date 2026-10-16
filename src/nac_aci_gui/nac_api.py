@@ -560,6 +560,148 @@ class NacApiClient:
             logger.error(f"Error reading ports for leaf {node_id}: {str(e)}", exc_info=True)
             return None
 
+    @staticmethod
+    def _iter_epgs(data_model: Dict[str, Any]):
+        """Yield (tenant, application profile, EPG) for every EPG in the data model."""
+        for tenant in data_model.get('apic', {}).get('tenants', []) or []:
+            for ap in tenant.get('application_profiles', []) or []:
+                for epg in ap.get('endpoint_groups', []) or []:
+                    yield tenant['name'], ap['name'], epg
+
+    @staticmethod
+    def _epg_path(tenant: str, app_profile: str, epg: str) -> str:
+        return (f"/apic/tenants/name={tenant}/application_profiles/name={app_profile}"
+                f"/endpoint_groups/name={epg}/static_ports")
+
+    def get_port_profile(self, node_id: int, module: int, port: int) -> Optional[list]:
+        """
+        Get every static port binding on a leaf port: the port's "profile"
+
+        Args:
+            node_id: Leaf node ID
+            module: Port module
+            port: Port number
+
+        Returns:
+            List of bindings (tenant, application profile, EPG, VLAN, mode), or None on failure
+        """
+        data_model = self.read_data_model()
+        if not data_model:
+            return None
+
+        profile = []
+        for tenant, ap, epg in self._iter_epgs(data_model):
+            for sp in epg.get('static_ports', []) or []:
+                if (sp.get('node_id') == node_id and sp.get('module', 1) == module
+                        and sp.get('port') == port and not sp.get('channel')):
+                    profile.append({
+                        'tenant': tenant,
+                        'application_profile': ap,
+                        'endpoint_group': epg['name'],
+                        'vlan': sp.get('vlan'),
+                        'mode': sp.get('mode', 'regular'),
+                    })
+        return sorted(profile, key=lambda b: (b['vlan'] or 0, b['endpoint_group']))
+
+    def plan_port_moves(self, moves: list, remove_source: bool = True) -> Dict[str, Any]:
+        """
+        Plan moving (or copying) the profile of one or more leaf ports to new leaf ports
+
+        Each EPG touched by the move gets a single ``replace`` of its whole
+        ``static_ports`` list. nac-api cannot select a static port by node and port, and
+        deleting by list index shifts the indexes of later entries, so rewriting the
+        list per EPG is the one safe way to add and remove bindings in the same change.
+
+        Args:
+            moves: List of {'source': {node_id, module, port}, 'destination': {node_id, module, port}}
+            remove_source: Remove the bindings from the source ports (move) rather than keep them (copy)
+
+        Returns:
+            Dict with 'changes' (batch operations), 'bindings' (what moves, per source port)
+            and 'errors' (reasons the move cannot go ahead). 'changes' is empty when errors exist.
+        """
+        data_model = self.read_data_model()
+        if not data_model:
+            return {'changes': [], 'bindings': [], 'errors': ['Failed to read the data model']}
+
+        def key(p):
+            return (int(p['node_id']), int(p.get('module', 1)), int(p['port']))
+
+        sources = {key(m['source']): key(m['destination']) for m in moves}
+        destinations = list(sources.values())
+        errors = []
+        if len(set(destinations)) != len(destinations):
+            errors.append('Two source ports were mapped to the same destination port')
+        if set(sources) & set(destinations):
+            errors.append('A destination port is also a source port in this move')
+
+        bindings = {src: [] for src in sources}
+        epg_lists = {}
+        for tenant, ap, epg in self._iter_epgs(data_model):
+            updated, touched = self._rewrite_static_ports(
+                tenant, ap, epg, sources, set(destinations), remove_source, bindings, errors)
+            if touched:
+                epg_lists[(tenant, ap, epg['name'])] = updated
+
+        for src, dst in sources.items():
+            if not bindings[src]:
+                errors.append(f"Node {src[0]} port {src[1]}/{src[2]} has no bindings to move")
+            else:
+                errors.extend(self._check_destination_allows(dst, bindings[src]))
+
+        changes = [] if errors else [{
+            'type': 'replace',
+            'path': self._epg_path(*epg_key),
+            'data': static_ports,
+            'change_message': f"{'Move' if remove_source else 'Copy'} static ports in EPG {epg_key[2]}",
+        } for epg_key, static_ports in epg_lists.items()]
+
+        return {
+            'changes': changes,
+            'errors': errors,
+            'bindings': [{'source': {'node_id': s[0], 'module': s[1], 'port': s[2]},
+                          'destination': {'node_id': d[0], 'module': d[1], 'port': d[2]},
+                          'bindings': bindings[s]} for s, d in sources.items()],
+        }
+
+    @staticmethod
+    def _rewrite_static_ports(tenant, ap, epg, sources, destinations, remove_source, bindings, errors):
+        """
+        Rewrite one EPG's static_ports for a move or copy
+
+        Records the bindings found on source ports and any binding already on a
+        destination port (an error). Returns the new list and whether it changed.
+        """
+        static_ports = epg.get('static_ports', []) or []
+        updated = [] if remove_source else list(static_ports)
+        touched = False
+        for sp in static_ports:
+            sp_key = (sp.get('node_id'), sp.get('module', 1), sp.get('port'))
+            single_port = not sp.get('channel')
+            if single_port and sp_key in destinations:
+                errors.append(f"Node {sp_key[0]} port {sp_key[1]}/{sp_key[2]} already has bindings "
+                              f"(EPG {epg['name']}, VLAN {sp.get('vlan')})")
+            if single_port and sp_key in sources:
+                touched = True
+                bindings[sp_key].append({'tenant': tenant, 'application_profile': ap,
+                                         'endpoint_group': epg['name'], 'vlan': sp.get('vlan'),
+                                         'mode': sp.get('mode', 'regular')})
+                # A move rewrites the binding in place; a copy keeps it and appends the new one
+                dst = sources[sp_key]
+                updated.append({**sp, 'node_id': dst[0], 'module': dst[1], 'port': dst[2]})
+            elif remove_source:
+                updated.append(sp)
+        return updated, touched
+
+    def _check_destination_allows(self, dst, port_bindings) -> list:
+        """Return an error for every binding whose EPG is not allowed on the destination port (AAEP → EPG)."""
+        allowed = self.get_available_epgs_for_port(*dst) or {}
+        allowed_keys = {(e['tenant'], e['application_profile'], e['endpoint_group'], e['vlan'])
+                        for e in (allowed.get('available', []) + allowed.get('existing', []))}
+        return [f"EPG {b['endpoint_group']} (VLAN {b['vlan']}) is not allowed on node {dst[0]} port {dst[1]}/{dst[2]}"
+                for b in port_bindings
+                if (b['tenant'], b['application_profile'], b['endpoint_group'], b['vlan']) not in allowed_keys]
+
     def get_available_epgs_for_port(self, node_id: int, module: int, port: int) -> Optional[list]:
         try:
             data_model = self.read_data_model()

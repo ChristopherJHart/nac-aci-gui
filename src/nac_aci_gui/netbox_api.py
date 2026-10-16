@@ -493,6 +493,115 @@ class NetBoxClient:
             connections.append(connection)
         return connections
 
+    def get_leaf_switches(self) -> Optional[list]:
+        """
+        Get leaf switches from NetBox with their ACI node ID, row (location) and rack
+
+        Returns:
+            List of leaf summaries sorted by name, or None if the request failed
+        """
+        result = self.get_devices({'role': 'leaf-switch', 'limit': 1000, 'ordering': 'name'})
+        if result is None:
+            return None
+
+        return [{
+            'id': device['id'],
+            'name': device['name'],
+            'node_id': (device.get('custom_fields') or {}).get('aci_node_id'),
+            'row': (device.get('location') or {}).get('name'),
+            'rack': (device.get('rack') or {}).get('name'),
+        } for device in result.get('results', [])]
+
+    def get_free_leaf_ports(self, leaf_device_id: int) -> Optional[list]:
+        """
+        Get a leaf switch's uncabled interfaces, i.e. ports a server can be plugged into
+
+        Args:
+            leaf_device_id: NetBox device ID of the leaf switch
+
+        Returns:
+            List of free ports sorted by module and port, or None if the request failed
+        """
+        result = self.get_interfaces({'device_id': leaf_device_id, 'cabled': 'false', 'limit': 1000})
+        if result is None:
+            return None
+
+        ports = []
+        for intf in result.get('results', []):
+            match = re.fullmatch(r'Ethernet(\d+)/(\d+)', intf['name'])
+            if match:
+                ports.append({
+                    'interface_id': intf['id'],
+                    'name': intf['name'],
+                    'module': int(match.group(1)),
+                    'port': int(match.group(2)),
+                })
+        return sorted(ports, key=lambda p: (p['module'], p['port']))
+
+    def move_server(self, server_id: int, rack_id: Optional[int], recables: list) -> Optional[str]:
+        """
+        Record a server move in NetBox: place it in a new rack and re-cable its interfaces
+
+        Every new leaf port is checked to be uncabled before anything is changed, so a
+        conflict leaves NetBox untouched.
+
+        Args:
+            server_id: NetBox device ID of the server
+            rack_id: NetBox rack ID to move the server to, or None to leave it in place
+            recables: List of {'server_interface_id', 'leaf_interface_id'} pairs
+
+        Returns:
+            None on success, otherwise an error message
+        """
+        for recable in recables:
+            leaf_intf = self.get(f"/api/dcim/interfaces/{recable['leaf_interface_id']}/")
+            if leaf_intf is None:
+                return f"Leaf interface {recable['leaf_interface_id']} not found in NetBox"
+            if leaf_intf.get('cable'):
+                return f"{leaf_intf['device']['name']} {leaf_intf['name']} is already cabled in NetBox"
+
+        if rack_id is not None:
+            error = self._move_to_rack(server_id, rack_id)
+            if error:
+                return error
+
+        for recable in recables:
+            error = self._recable(recable['server_interface_id'], recable['leaf_interface_id'])
+            if error:
+                return error
+
+        return None
+
+    def _move_to_rack(self, device_id: int, rack_id: int) -> Optional[str]:
+        """Place a device in a rack (and that rack's location), clearing its U position."""
+        rack = self.get(f'/api/dcim/racks/{rack_id}/')
+        if rack is None:
+            return f"Rack {rack_id} not found in NetBox"
+        # The old U position may already be taken in the new rack
+        if self.patch(f'/api/dcim/devices/{device_id}/', {
+            'rack': rack_id,
+            'location': (rack.get('location') or {}).get('id'),
+            'position': None,
+            'face': '',
+        }) is None:
+            return "Failed to move the server to the new rack in NetBox"
+        return None
+
+    def _recable(self, server_interface_id: int, leaf_interface_id: int) -> Optional[str]:
+        """Replace a server interface's cable with one to a new leaf interface."""
+        server_intf = self.get(f"/api/dcim/interfaces/{server_interface_id}/")
+        if server_intf is None:
+            return f"Server interface {server_interface_id} not found in NetBox"
+        if server_intf.get('cable') and not self.delete(f"/api/dcim/cables/{server_intf['cable']['id']}/"):
+            return f"Failed to remove the old cable on {server_intf['name']} in NetBox"
+        if self.post('/api/dcim/cables/', {
+            'a_terminations': [{'object_type': 'dcim.interface', 'object_id': server_interface_id}],
+            'b_terminations': [{'object_type': 'dcim.interface', 'object_id': leaf_interface_id}],
+            'status': 'connected',
+        }) is None:
+            return f"Failed to cable {server_intf['name']} to its new leaf port in NetBox"
+        return None
+
     def get_locations(self, params: Optional[Dict] = None) -> Optional[Dict[str, Any]]:
         """
         Get locations from NetBox
