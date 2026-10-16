@@ -238,6 +238,8 @@ All settings are environment variables, kept in `.env`, so no credentials live i
 | **Copy a server** | Give another server the same VLANs, mapping source interfaces to target interfaces (`eth0` → `eth0` by default). The target keeps its own cabling | Adds the VLANs the target's ports don't already have; source ports are unchanged |
 | **Move a server** | Pick the new rack and, for each interface, the free leaf port it was plugged into. Leafs in that row are listed first, but any leaf can be used | Adds the bindings on the new ports and removes them from the old ones (or keeps them, to copy). NetBox is updated with the new rack and cabling |
 
+Every VLAN in these workflows (and in **Add VLAN to Port**) is shown with its subnet, for example `VLAN 30 · MGMT-EPG · 10.100.30.0/24`, so server teams can match a VLAN ID to its network. The subnet comes from NetBox IPAM: the prefixes linked to that VLAN within the `demo-app-profile` VLAN group. When NetBox has no prefix for a VLAN, the subnet is left out. The subnet also appears in the pull request and change request email.
+
 Every action opens a single pull request and emails a change request. The portal refuses a change when:
 
 - a VLAN is already on the port, or the EPG is not allowed on it (the port's AAEP doesn't carry it)
@@ -269,6 +271,21 @@ For NetBox, the portal needs:
 - cables from server interfaces to leaf interfaces named `Ethernet<module>/<port>`
 
 Each affected EPG's `static_ports` list is rewritten with a single `replace`. nac-api selects list items only by index or by one `name=value` key, and static ports have no name, so deleting by index would shift the positions of later entries in the same change.
+
+`scripts/sync_netbox_ipam.py` keeps NetBox IPAM in line with the data model. For every routed bridge domain behind an EPG that is bound to a VLAN, it ensures NetBox has:
+
+- the ACI tenant
+- the VRF, named `<tenant>/<vrf>`. VRFs the tenant doesn't define resolve to `common`, as on the APIC
+- the VLAN
+- the subnet as a prefix linked to that VLAN
+- the gateway as an anycast IP address
+
+Every value comes from the data model, so NetBox and the fabric agree. Run it, and re-run it after bridge domain changes:
+
+```bash
+docker compose exec nac-aci-gui .venv/bin/python scripts/sync_netbox_ipam.py --dry-run
+docker compose exec nac-aci-gui .venv/bin/python scripts/sync_netbox_ipam.py
+```
 
 `scripts/seed_netbox_dcim.py` seeds a demo layout: three rows, twelve racks, six leaf switches (nodes 101–106) and 48 dual-homed servers. It is idempotent, so you can re-run it safely:
 

@@ -17,6 +17,20 @@ logger = logging.getLogger(__name__)
 nac_bp = Blueprint('nac', __name__)
 
 
+def _with_subnets(items: list, vlan_prefixes: Optional[dict] = None) -> list:
+    """
+    Add each VLAN's NetBox subnet(s) to a list of VLAN bindings or EPGs (as 'subnets')
+
+    NetBox IPAM is the source of truth for which prefix a VLAN carries, so the subnet
+    comes from there rather than from the data model.
+    """
+    if vlan_prefixes is None:
+        vlan_prefixes = get_netbox_client().get_vlan_prefixes()
+    for item in items:
+        item['subnets'] = vlan_prefixes.get(item.get('vlan'), [])
+    return items
+
+
 def _notify_change(client, nac_response, action: str, summary: str, details: list) -> tuple[Optional[str], dict]:
     """
     Resolve the pull request behind a NaC API operation and email a change request for it
@@ -1422,7 +1436,10 @@ def get_port_available_epgs():
         result = client.get_available_epgs_for_port(node_id, module, port)
         if result is not None:
             if isinstance(result, dict):
-                return jsonify({'status': 'success', 'data': result.get('available', []), 'existing': result.get('existing', [])})
+                prefixes = get_netbox_client().get_vlan_prefixes()
+                return jsonify({'status': 'success',
+                                'data': _with_subnets(result.get('available', []), prefixes),
+                                'existing': _with_subnets(result.get('existing', []), prefixes)})
             return jsonify({'status': 'success', 'data': result, 'existing': []})
         else:
             return jsonify({'status': 'error', 'message': 'Failed to retrieve available EPGs'}), 500
@@ -1543,10 +1560,12 @@ def get_server_profile(server_id):
             return jsonify({'status': 'error', 'message': 'Failed to read server connections from NetBox'}), 500
 
         client = get_nac_client()
+        prefixes = get_netbox_client().get_vlan_prefixes()
         for conn in connections:
             conn['bindings'] = []
             if conn.get('node_id') and conn.get('port') is not None:
-                conn['bindings'] = client.get_port_profile(conn['node_id'], conn['module'], conn['port']) or []
+                conn['bindings'] = _with_subnets(
+                    client.get_port_profile(conn['node_id'], conn['module'], conn['port']) or [], prefixes)
         return jsonify({'status': 'success', 'data': connections})
     except Exception as e:
         logger.error(f"Error in server-profile endpoint: {str(e)}", exc_info=True)
@@ -1647,6 +1666,7 @@ def move_server():
                             'errors': plan['errors']}), 400
 
         verb = 'Move' if remove_source else 'Copy'
+        prefixes = get_netbox_client().get_vlan_prefixes()
         interface_by_source = {(m['source']['node_id'], m['source'].get('module', 1), m['source']['port']):
                                m.get('interface') for m in config_moves}
         recabled_only = [m for m in moves if not m.get('has_bindings', True)]
@@ -1654,7 +1674,9 @@ def move_server():
         for item in plan['bindings']:
             src, dst = item['source'], item['destination']
             nic = interface_by_source.get((src['node_id'], src['module'], src['port'])) or 'NIC'
-            vlans = ', '.join(f"{b['vlan']} ({b['endpoint_group']}, {b['mode']})" for b in item['bindings'])
+            vlans = ', '.join(f"{b['vlan']} ({b['endpoint_group']}, {b['mode']}"
+                              f"{', ' + ', '.join(prefixes.get(b['vlan'], [])) if prefixes.get(b['vlan']) else ''})"
+                              for b in item['bindings'])
             route = (f"node {src['node_id']} {src['module']}/{src['port']} → "
                      f"node {dst['node_id']} {dst['module']}/{dst['port']}")
             lines.append(f"| {nic} | {route} | {vlans} |")
@@ -1667,7 +1689,7 @@ def move_server():
                 f"- **From**: {server.get('old_rack') or 'N/A'}\n"
                 f"- **To**: {rack_label}\n"
                 f"- **Old ports**: {'removed in this change' if remove_source else 'kept (copy)'}\n\n"
-                f"| Interface | Leaf ports | VLANs (EPG, mode) |\n|---|---|---|\n" + '\n'.join(lines) +
+                f"| Interface | Leaf ports | VLANs (EPG, mode, subnet) |\n|---|---|---|\n" + '\n'.join(lines) +
                 ''.join(f"\n| {m.get('interface') or 'NIC'} | node {m['source']['node_id']} "
                         f"{m['source'].get('module', 1)}/{m['source']['port']} → node {m['destination']['node_id']} "
                         f"{m['destination']['module']}/{m['destination']['port']} | none (re-cabled only) |"
@@ -1707,7 +1729,9 @@ def move_server():
 
 def _binding_label(b: dict) -> str:
     mode = b.get('mode', 'regular')
-    return f"VLAN {b['vlan']} ({b['endpoint_group']}{', ' + mode if mode != 'regular' else ''})"
+    subnet = ', '.join(b.get('subnets') or [])
+    return (f"VLAN {b['vlan']} ({b['endpoint_group']}{', ' + mode if mode != 'regular' else ''}"
+            f"{', ' + subnet if subnet else ''})")
 
 
 def _submit_port_edits(client, edits: list, action: str, title: str, body_intro: str, details: list):
@@ -1715,6 +1739,10 @@ def _submit_port_edits(client, edits: list, action: str, title: str, body_intro:
     plan = client.plan_port_edits(edits)
     if plan['errors']:
         return jsonify({'status': 'error', 'message': 'The change cannot go ahead', 'errors': plan['errors']}), 400
+    prefixes = get_netbox_client().get_vlan_prefixes()
+    for s in plan['summary']:
+        _with_subnets(s['added'], prefixes)
+        _with_subnets(s['removed'], prefixes)
 
     interface_by_port = {(int(e['port']['node_id']), int(e['port'].get('module', 1)), int(e['port']['port'])):
                          e.get('interface') or 'NIC' for e in edits}

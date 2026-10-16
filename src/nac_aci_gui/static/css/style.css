@@ -1114,3 +1114,9 @@ input[data-has-value="true"]:focus {
     --bs-table-color: var(--text-primary);
     border-color: var(--border-color);
 }
+
+/* Subnet shown next to a VLAN, from NetBox IPAM: tabular digits keep addresses aligned and legible */
+.sc-subnet {
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}

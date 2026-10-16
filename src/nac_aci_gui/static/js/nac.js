@@ -2248,7 +2248,8 @@ function initializeAddStaticPortForm() {
                     var badge = epg.mode === 'native' ? 'bg-warning text-dark' :
                                 epg.mode === 'untagged' ? 'bg-secondary' : 'bg-primary';
                     return '<li class="list-group-item d-flex justify-content-between align-items-center py-2">' +
-                        '<span><i class="bi bi-check-circle-fill text-success me-2"></i>' + epg.display + '</span>' +
+                        '<span><i class="bi bi-check-circle-fill text-success me-2"></i>' + epg.display +
+                        ((epg.subnets || []).length ? ' <span class="text-muted small">' + epg.subnets.join(', ') + '</span>' : '') + '</span>' +
                         '<span class="badge ' + badge + '">' + (epg.mode || 'regular') + '</span></li>';
                 }).join('');
                 existingDiv.innerHTML = '<div class="mb-4"><small class="form-text fw-bold text-muted d-block mb-2">' +
@@ -2271,7 +2272,7 @@ function initializeAddStaticPortForm() {
                         endpoint_group: epg.endpoint_group,
                         vlan: epg.vlan
                     });
-                    option.textContent = epg.display;
+                    option.textContent = epg.display + ((epg.subnets || []).length ? ' \u2014 ' + epg.subnets.join(', ') : '');
                     epgSelect.appendChild(option);
                 });
                 epgSelect.disabled = false;
@@ -2547,10 +2548,23 @@ function initializeServerConnections() {
     const selectedServer = () => servers.find(s => String(s.id) === serverSelect.value);
     const cabled = list => list.filter(c => c.leaf && c.node_id && c.port != null);
 
+    // "VLAN 30 · MGMT-EPG · 10.100.30.0/24", plus the mode when it isn't regular (tagged).
+    // The subnet comes from NetBox IPAM and is left out when NetBox has no prefix for the VLAN.
+    function vlanLabel(b, mode) {
+        const m = mode !== undefined ? mode : b.mode;
+        return 'VLAN ' + escapeHtml(b.vlan) + ' \u00b7 ' + escapeHtml(b.endpoint_group) +
+            ((b.subnets || []).length ? ' \u00b7 <span class="sc-subnet">' + escapeHtml(b.subnets.join(', ')) + '</span>' : '') +
+            (m && m !== 'regular' ? ' \u00b7 ' + escapeHtml(m) : '');
+    }
+
+    // Plain-text form for <option> elements, which can't hold markup
+    function vlanText(e) {
+        return 'VLAN ' + e.vlan + ' \u00b7 ' + e.endpoint_group + ((e.subnets || []).length ? ' \u00b7 ' + e.subnets.join(', ') : '');
+    }
+
     function vlanBadges(bindings) {
         return (bindings || []).length
-            ? bindings.map(b => '<span class="badge bg-primary me-1 mb-1">VLAN ' + escapeHtml(b.vlan) + ' · ' +
-                  escapeHtml(b.endpoint_group) + (b.mode && b.mode !== 'regular' ? ' · ' + escapeHtml(b.mode) : '') + '</span>').join('')
+            ? bindings.map(b => '<span class="badge bg-primary me-1 mb-1">' + vlanLabel(b) + '</span>').join('')
             : '<span class="text-muted">no VLANs</span>';
     }
 
@@ -2716,10 +2730,9 @@ function initializeServerConnections() {
         modifyEditor.innerHTML = ports.map(function(c) {
             const current = (c.bindings || []).map(b =>
                 '<label class="sc-chip"><input type="checkbox" class="form-check-input me-1 sc-remove" data-iface="' + c.interface_id +
-                '" value="' + escapeAttr(JSON.stringify(b)) + '"> <span>VLAN ' + escapeHtml(b.vlan) + ' · ' +
-                escapeHtml(b.endpoint_group) + (b.mode !== 'regular' ? ' · ' + escapeHtml(b.mode) : '') + '</span></label>').join('');
+                '" value="' + escapeAttr(JSON.stringify(b)) + '"> <span>' + vlanLabel(b) + '</span></label>').join('');
             const addable = available[c.interface_id].map(e =>
-                '<option value="' + escapeAttr(JSON.stringify(e)) + '">' + escapeHtml(e.display) + '</option>').join('');
+                '<option value="' + escapeAttr(JSON.stringify(e)) + '">' + escapeHtml(vlanText(e)) + '</option>').join('');
             return '<div class="sc-port border rounded p-3 mb-3" data-iface="' + c.interface_id + '">' +
                 '<div class="fw-semibold mb-2"><i class="bi bi-ethernet me-1"></i>' + escapeHtml(c.interface) + ' → ' +
                 escapeHtml(c.leaf) + ' ' + escapeHtml(c.leaf_interface) + ' <span class="text-muted small">(Node ' + c.node_id + ')</span></div>' +
@@ -2746,8 +2759,7 @@ function initializeServerConnections() {
                 chip.className = 'sc-chip sc-chip-add';
                 chip.dataset.key = bindingKey(epg);
                 chip.dataset.value = JSON.stringify(Object.assign({}, epg, { mode: mode }));
-                chip.innerHTML = '<i class="bi bi-plus-circle me-1"></i>VLAN ' + escapeHtml(epg.vlan) + ' · ' + escapeHtml(epg.endpoint_group) +
-                    (mode !== 'regular' ? ' · ' + escapeHtml(mode) : '') +
+                chip.innerHTML = '<i class="bi bi-plus-circle me-1"></i>' + vlanLabel(epg, mode) +
                     ' <button type="button" class="btn-close btn-close-sm ms-1 sc-undo" aria-label="Remove"></button>';
                 list.appendChild(chip);
             }

@@ -529,6 +529,29 @@ class NetBoxClient:
             by_server.setdefault(intf['device']['id'], []).append(connection)
         return by_server
 
+    def get_vlan_prefixes(self, group_slug: str = 'demo-app-profile') -> Dict[int, List[str]]:
+        """
+        Map each VLAN ID in a VLAN group to the prefixes NetBox links to that VLAN
+
+        NetBox IPAM is the source of truth for which subnet a VLAN carries. VLAN IDs
+        are only unique within a VLAN group, so the lookup is scoped to one group.
+
+        Args:
+            group_slug: Slug of the VLAN group the EPG VLANs belong to
+
+        Returns:
+            Dict of VLAN ID to sorted prefix strings; empty if NetBox can't be read
+        """
+        result = self.get('/api/ipam/prefixes/', params={'vlan_group': group_slug, 'limit': 1000})
+        if result is None:
+            return {}
+        prefixes: Dict[int, List[str]] = {}
+        for prefix in result.get('results', []):
+            vid = (prefix.get('vlan') or {}).get('vid')
+            if vid is not None:
+                prefixes.setdefault(vid, []).append(prefix['prefix'])
+        return {vid: sorted(p) for vid, p in prefixes.items()}
+
     def get_leaf_switches(self) -> Optional[list]:
         """
         Get leaf switches from NetBox with their ACI node ID, row (location) and rack
