@@ -2859,11 +2859,20 @@ function initializeServerConnections() {
         moveRack.disabled = false;
     }
 
+    // Uncabled ports that aren't offered: still configured in the data model, or being changed by an open PR
+    function heldNote(held) {
+        const parts = [];
+        if (held && held.configured) parts.push(held.configured + ' still configured');
+        if (held && held.pending) parts.push(held.pending + ' in an open PR');
+        return parts.length ? ' (' + parts.join(', ') + ')' : '';
+    }
+
     function leafOptions(row) {
         // Physical location ranks leafs rather than filtering them out
         const group = (label, list) => list.length ? '<optgroup label="' + escapeAttr(label) + '">' + list.map(t =>
             '<option value="' + t.node_id + '"' + (t.free_ports.length ? '' : ' disabled') + '>' + escapeHtml(t.name) +
-            ' (Node ' + t.node_id + ', Rack ' + escapeHtml(t.rack || '?') + ') — ' + t.free_ports.length + ' free</option>').join('') + '</optgroup>' : '';
+            ' (Node ' + t.node_id + ', Rack ' + escapeHtml(t.rack || '?') + ') — ' + t.free_ports.length + ' free' +
+            heldNote(t.held_ports) + '</option>').join('') + '</optgroup>' : '';
         return '<option value="">-- Select a leaf --</option>' + group('In ' + (row || 'this row'), targets.filter(t => t.row === row)) +
             group('Other rows', targets.filter(t => t.row !== row));
     }

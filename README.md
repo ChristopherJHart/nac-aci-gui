@@ -236,7 +236,7 @@ All settings are environment variables, kept in `.env`, so no credentials live i
 |---|---|---|
 | **Modify a server** | Tick VLANs to remove and pick VLANs to add, on any of the server's ports | Adds and removes bindings in one change |
 | **Copy a server** | Give another server the same VLANs, mapping source interfaces to target interfaces (`eth0` → `eth0` by default). The target keeps its own cabling | Adds the VLANs the target's ports don't already have; source ports are unchanged |
-| **Move a server** | Pick the new rack and, for each interface, the free leaf port it was plugged into. Leafs in that row are listed first, but any leaf can be used | Adds the bindings on the new ports and removes them from the old ones (or keeps them, to copy). NetBox is updated with the new rack and cabling |
+| **Move a server** | Pick the new rack and, for each interface, the free leaf port it was plugged into. A port is free only if it is uncabled in NetBox, has no configuration in the data model, and no open pull request is changing it. Leafs in that row are listed first, but any leaf can be used | Adds the bindings on the new ports and removes them from the old ones (or keeps them, to copy). NetBox is updated with the new rack and cabling |
 
 Every VLAN in these workflows (and in **Add VLAN to Port**) is shown with its subnet, for example `VLAN 30 · MGMT-EPG · 10.100.30.0/24`, so server teams can match a VLAN ID to its network. The subnet comes from NetBox IPAM: the prefixes linked to that VLAN within the `demo-app-profile` VLAN group. When NetBox has no prefix for a VLAN, the subnet is left out. The subnet also appears in the pull request and change request email.
 
@@ -246,6 +246,8 @@ Every action opens a single pull request and emails a change request. The portal
 - for a move, a destination port already has bindings, or two interfaces map to the same port
 
 Interfaces without VLANs are re-cabled in NetBox during a move but need no data model change.
+
+**Known limitation:** a move updates NetBox (rack and cabling) when it is submitted, but the data model changes only when its pull request merges. If that PR is closed instead, NetBox has to be put back by hand. Updating NetBox on merge, through a webhook or a post-merge pipeline step, would remove the gap.
 
 Both server lists are filtered by whether a server's NetBox-cabled leaf ports have VLAN bindings in the data model:
 

@@ -1607,8 +1607,17 @@ def get_server_config_status():
 @nac_bp.route('/move-targets', methods=['GET'])
 def get_move_targets():
     """
-    Get leaf switches with their free (uncabled in NetBox) ports that are also
-    defined in the data model, i.e. ports a moved server can be plugged into
+    Get leaf switches with the ports a moved server can be plugged into
+
+    A port is free only when all of these hold, so the list agrees with the checks
+    the move itself makes:
+    - it is defined in the leaf's interface profile in the data model
+    - it is uncabled in NetBox
+    - it has no static port bindings in the data model (NetBox can show a port
+      uncabled while its configuration is still there, e.g. after a copy)
+    - no open pull request adds or removes bindings on it
+
+    Each leaf also reports how many otherwise-free ports were held back and why.
     """
     try:
         netbox_client = get_netbox_client()
@@ -1617,15 +1626,26 @@ def get_move_targets():
             return jsonify({'status': 'error', 'message': 'Failed to read leaf switches from NetBox'}), 500
 
         client = get_nac_client()
+        bound = client.get_bound_ports() or set()
+        pending = client.get_ports_in_open_pull_requests()
         targets = []
         for leaf in leafs:
             if not leaf['node_id']:
                 continue
             modeled = {(p['module'], p['port']) for p in (client.get_ports_for_leaf(leaf['node_id']) or [])}
-            free = [p for p in (netbox_client.get_free_leaf_ports(leaf['id']) or [])
-                    if (p['module'], p['port']) in modeled]
-            targets.append({**leaf, 'free_ports': free})
-        return jsonify({'status': 'success', 'data': targets})
+            free, held = [], {'configured': 0, 'pending': 0}
+            for p in netbox_client.get_free_leaf_ports(leaf['id']) or []:
+                key = (leaf['node_id'], p['module'], p['port'])
+                if (p['module'], p['port']) not in modeled:
+                    continue
+                if key in bound:
+                    held['configured'] += 1
+                elif pending and key in pending:
+                    held['pending'] += 1
+                else:
+                    free.append(p)
+            targets.append({**leaf, 'free_ports': free, 'held_ports': held})
+        return jsonify({'status': 'success', 'data': targets, 'pending_checked': pending is not None})
     except Exception as e:
         logger.error(f"Error in move-targets endpoint: {str(e)}", exc_info=True)
         return jsonify({'status': 'error', 'message': str(e)}), 500
@@ -1661,6 +1681,13 @@ def move_server():
 
         client = get_nac_client()
         plan = client.plan_port_moves(config_moves, remove_source=remove_source)
+        # A destination an open pull request is already changing would collide when both merge
+        pending = client.get_ports_in_open_pull_requests() or set()
+        for m in moves:
+            d = m['destination']
+            if (int(d['node_id']), int(d.get('module', 1)), int(d['port'])) in pending:
+                plan['errors'].append(f"Node {d['node_id']} port {d.get('module', 1)}/{d['port']} is being changed "
+                                      f"by an open pull request; pick another port or wait for it to merge")
         if plan['errors']:
             return jsonify({'status': 'error', 'message': 'The move cannot go ahead',
                             'errors': plan['errors']}), 400

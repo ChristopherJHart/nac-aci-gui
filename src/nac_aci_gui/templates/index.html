@@ -886,6 +886,10 @@
                                             <small class="form-text text-muted">Where the server now sits. Leafs in this row are listed first, but any leaf can be used.</small>
                                         </div>
                                         <div id="scMoveMappings"></div>
+                                        <div class="sc-note small mt-3">
+                                            <i class="bi bi-info-circle me-1"></i>Free ports are uncabled in NetBox, have no configuration in the data model, and aren't being changed by an open pull request.
+                                            NetBox is updated with the new rack and cabling as soon as you submit; the data model changes when the pull request is merged.
+                                        </div>
                                         <div class="form-check mt-3">
                                             <input class="form-check-input" type="checkbox" id="scMoveRemoveSource" checked>
                                             <label class="form-check-label" for="scMoveRemoveSource">

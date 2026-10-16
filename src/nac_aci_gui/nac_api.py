@@ -1221,6 +1221,36 @@ class NacApiClient:
         """
         return self._operation_request("apply", path, data, change_message, apply, apply_title, apply_message, source)
 
+    def get_ports_in_open_pull_requests(self) -> Optional[set]:
+        """
+        Get the leaf ports that open pull requests add or remove static port bindings on
+
+        Those ports are about to change, so they shouldn't be offered as free. Ports
+        are read from each pull request's diff, where nac-api writes static ports as
+        node_id / module / port lines. Only GitHub (including GitHub Enterprise) is
+        supported.
+
+        Returns:
+            Set of (node_id, module, port), or None if the SCM can't be read
+        """
+        if self.scm_provider != 'github':
+            return set()
+        headers = {'Authorization': f'token {self.api_key}'}
+        base = f"{self.scm_api_url.rstrip('/')}/repos/{self.repository_url}/pulls"
+        try:
+            response = requests.get(base, params={'state': 'open', 'per_page': 100}, headers=headers, timeout=15)
+            response.raise_for_status()
+            claimed = set()
+            for pr in response.json():
+                diff = requests.get(pr['url'], headers={**headers, 'Accept': 'application/vnd.github.diff'}, timeout=15)
+                diff.raise_for_status()
+                claimed.update((int(n), int(m), int(p)) for n, m, p in re.findall(
+                    r'^[+-]\s+- node_id: (\d+)\n[+-]\s+module: (\d+)\n[+-]\s+port: (\d+)', diff.text, re.M))
+            return claimed
+        except (requests.exceptions.RequestException, ValueError, KeyError) as e:
+            logger.warning(f"Could not read open pull requests: {str(e)}")
+            return None
+
     def get_pull_request_url(self, operation_response: Optional[Dict[str, Any]]) -> Optional[str]:
         """
         Resolve the web URL of the pull request behind a NaC API operation
