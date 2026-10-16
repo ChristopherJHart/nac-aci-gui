@@ -1553,6 +1553,28 @@ def get_server_profile(server_id):
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
 
+@nac_bp.route('/movable-servers', methods=['GET'])
+def get_movable_servers():
+    """
+    Get the IDs of servers that can be moved
+
+    A server is movable when at least one of its interfaces is cabled (in NetBox) to a
+    leaf port that has VLAN bindings in the data model. Servers with nothing configured
+    have no profile to move.
+    """
+    try:
+        connections = get_netbox_client().get_all_server_connections()
+        bound = get_nac_client().get_bound_ports()
+        if connections is None or bound is None:
+            return jsonify({'status': 'error', 'message': 'Failed to read NetBox or the data model'}), 500
+        movable = sorted(server_id for server_id, conns in connections.items()
+                         if any((c['node_id'], c['module'], c['port']) in bound for c in conns if c['node_id']))
+        return jsonify({'status': 'success', 'data': movable})
+    except Exception as e:
+        logger.error(f"Error in movable-servers endpoint: {str(e)}", exc_info=True)
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+
 @nac_bp.route('/move-targets', methods=['GET'])
 def get_move_targets():
     """

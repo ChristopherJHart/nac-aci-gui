@@ -15,6 +15,7 @@ COPY pyproject.toml ./
 COPY README.md ./
 # Copy application source
 COPY src/ src/
+COPY scripts/ scripts/
 COPY yaml/*.sample yaml/
 
 # Install dependencies and the project

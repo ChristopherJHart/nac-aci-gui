@@ -245,6 +245,20 @@ Every action opens a single pull request and emails a change request. The portal
 
 Interfaces without VLANs are re-cabled in NetBox during a move but need no data model change.
 
+**Move a server** lists only servers that can be moved: at least one interface must be cabled to a leaf port with VLAN bindings in the data model. To stage servers for testing moves, run:
+
+```bash
+docker compose exec nac-aci-gui .venv/bin/python scripts/stage_move_test_data.py --dry-run   # preview
+docker compose exec nac-aci-gui .venv/bin/python scripts/stage_move_test_data.py             # open the PR
+```
+
+The script gives three servers on each leaf a role-based profile:
+
+- `eth0`: data VLANs
+- `eth1`: management (VLAN 30)
+
+It then opens one pull request. Once that PR is merged, those servers appear in the Move list. The script skips ports that are already configured, ports that an open PR changes, and ports whose access policy can't carry the profile.
+
 For NetBox, the portal needs:
 
 - servers with the `server` device role, placed in racks in a location (row)

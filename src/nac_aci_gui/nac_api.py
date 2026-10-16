@@ -603,6 +603,20 @@ class NacApiClient:
                     })
         return sorted(profile, key=lambda b: (b['vlan'] or 0, b['endpoint_group']))
 
+    def get_bound_ports(self) -> Optional[set]:
+        """
+        Get every single (non port-channel) leaf port that has at least one static port binding
+
+        Returns:
+            Set of (node_id, module, port), or None if the data model could not be read
+        """
+        data_model = self.read_data_model()
+        if not data_model:
+            return None
+        return {(sp.get('node_id'), sp.get('module', 1), sp.get('port'))
+                for _, _, epg in self._iter_epgs(data_model)
+                for sp in epg.get('static_ports', []) or [] if not sp.get('channel')}
+
     def plan_port_moves(self, moves: list, remove_source: bool = True) -> Dict[str, Any]:
         """
         Plan moving (or copying) the profile of one or more leaf ports to new leaf ports

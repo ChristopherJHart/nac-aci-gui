@@ -2524,6 +2524,7 @@ function initializeServerConnections() {
 
     let action = null;
     let servers = [], racks = [], targets = [];
+    let movable = null;  // IDs of servers with VLANs to move; loaded when Move is chosen
     let profile = [], targetProfile = [];
     let available = {};  // interface_id -> EPGs that can be added to that port
 
@@ -2565,6 +2566,8 @@ function initializeServerConnections() {
         $('scServerHeading').textContent = ACTIONS[action].heading;
         submitLabel.textContent = ACTIONS[action].submit;
         responseDiv.style.display = 'none';
+        renderServers();
+        if (action === 'move') loadMovable();
         // Keep the chosen server when switching actions; rebuild the action-specific step
         if (selectedServer()) onServerChosen(); else resetSteps();
     }
@@ -2593,12 +2596,17 @@ function initializeServerConnections() {
 
     function renderServers() {
         fillSelect(rackSelect, 'All racks', uniqueSorted(servers.filter(s => !rowSelect.value || s.row === rowSelect.value).map(s => s.rack)));
-        const list = servers.filter(s => (!rowSelect.value || s.row === rowSelect.value) &&
-                                         (!rackSelect.value || s.rack === rackSelect.value));
+        // Move only offers servers that have VLANs configured on their cabled ports
+        const pool = action === 'move' && movable ? servers.filter(s => movable.has(s.id)) : servers;
+        const list = pool.filter(s => (!rowSelect.value || s.row === rowSelect.value) &&
+                                      (!rackSelect.value || s.rack === rackSelect.value));
         const selected = serverSelect.value;
         serverSelect.innerHTML = serverOptions(list, searchInput.value.trim().toLowerCase());
         if (Array.from(serverSelect.options).some(o => o.value === selected)) serverSelect.value = selected;
-        serverHelp.textContent = serverSelect.options.length + ' of ' + servers.length + ' servers shown';
+        else if (selected) { serverSelect.value = ''; profileDiv.style.display = 'none'; resetSteps(); }
+        serverHelp.textContent = action === 'move' && movable === null ? 'Finding servers that can be moved...'
+            : serverSelect.options.length + ' of ' + pool.length + (action === 'move' ? ' movable' : '') + ' servers shown' +
+              (action === 'move' ? ' \u2014 only servers with VLANs configured on their cabled ports can be moved' : '');
     }
 
     async function loadReferenceData() {
@@ -2615,6 +2623,19 @@ function initializeServerConnections() {
             console.error('Error loading servers:', error);
             serverHelp.textContent = 'Failed to load servers from NetBox';
         }
+    }
+
+    async function loadMovable() {
+        movable = null;
+        renderServers();
+        try {
+            const result = await fetch('/api/v1/nac/movable-servers').then(r => r.json());
+            movable = new Set(result.status === 'success' ? result.data : []);
+        } catch (error) {
+            console.error('Error loading movable servers:', error);
+            movable = new Set();
+        }
+        if (action === 'move') renderServers();
     }
 
     rowSelect.addEventListener('change', () => { rackSelect.value = ''; renderServers(); });
@@ -2920,7 +2941,7 @@ function initializeServerConnections() {
                         : '<div class="change-request-notice change-request-failed mt-2 small"><strong>NetBox was not updated:</strong> ' + escapeHtml(result.netbox_error) + '</div>')
                         : ' Changes show here once the pull request is merged.') +
                     changeRequestNotice(result.change_request);
-                if (action === 'move') { await loadReferenceData(); profileDiv.style.display = 'none'; resetSteps(); }
+                if (action === 'move') { await loadReferenceData(); profileDiv.style.display = 'none'; resetSteps(); loadMovable(); }
                 else { onServerChosen(); }
             } else {
                 responseDiv.className = 'alert alert-danger';

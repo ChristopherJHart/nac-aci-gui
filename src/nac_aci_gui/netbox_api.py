@@ -493,6 +493,42 @@ class NetBoxClient:
             connections.append(connection)
         return connections
 
+    def get_all_server_connections(self) -> Optional[Dict[int, list]]:
+        """
+        Get every server interface and the ACI leaf port it is cabled to, in bulk
+
+        Same shape as get_server_connections, but built from two list calls (server
+        interfaces and leaf switches) rather than one call per server.
+
+        Returns:
+            Dict of server device ID to its list of connections, or None if a request failed
+        """
+        interfaces = self.get_interfaces({'role': 'server', 'limit': 1000})
+        leafs = self.get_leaf_switches()
+        if interfaces is None or leafs is None:
+            return None
+        node_ids = {leaf['id']: leaf['node_id'] for leaf in leafs}
+
+        by_server: Dict[int, list] = {}
+        for intf in sorted(interfaces.get('results', []), key=lambda i: i['name']):
+            far_end = next((peer for peer in intf.get('link_peers') or []
+                            if intf.get('link_peers_type') == 'dcim.interface'), None)
+            connection = {'interface_id': intf['id'], 'interface': intf['name'], 'cabled': intf.get('cable') is not None,
+                          'leaf': None, 'leaf_device_id': None, 'node_id': None, 'leaf_interface': None,
+                          'module': None, 'port': None}
+            if far_end:
+                match = re.fullmatch(r'Ethernet(\d+)/(\d+)', far_end['name'])
+                connection.update({
+                    'leaf': far_end['device']['name'],
+                    'leaf_device_id': far_end['device']['id'],
+                    'node_id': node_ids.get(far_end['device']['id']),
+                    'leaf_interface': far_end['name'],
+                    'module': int(match.group(1)) if match else None,
+                    'port': int(match.group(2)) if match else None,
+                })
+            by_server.setdefault(intf['device']['id'], []).append(connection)
+        return by_server
+
     def get_leaf_switches(self) -> Optional[list]:
         """
         Get leaf switches from NetBox with their ACI node ID, row (location) and rack
